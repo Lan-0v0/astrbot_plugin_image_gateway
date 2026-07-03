@@ -1,11 +1,43 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+Mode = Literal["text_to_image", "image_to_image"]
+
+_SAFETY_ERROR_PATTERN = re.compile(
+    r"content[_\s-]?policy|moderation|safety|sensitive|sexual|"
+    r"sexually[_\s-]?explicit|blocked|harm|inappropriate|"
+    r"违反|敏感|审核|安全|色情",
+    re.IGNORECASE,
+)
 
 
 class GenerationError(Exception):
     """Raised when image generation fails."""
+
+
+class SensitiveContentError(GenerationError):
+    """Raised when content is blocked after moderation none→low fallback."""
+
+    def __init__(self, mode: Mode):
+        super().__init__(sensitive_content_message(mode))
+        self.mode = mode
+
+
+def is_safety_moderation_error(message: str) -> bool:
+    return bool(_SAFETY_ERROR_PATTERN.search(message or ""))
+
+
+def sensitive_content_message(mode: Mode) -> str:
+    if mode == "image_to_image":
+        return "包含敏感内容，改图失败"
+    return "包含敏感内容，生图失败"
+
+
+def moderation_bypass_enabled(level: str, *, default: str = "auto") -> bool:
+    return (level or default).lower() == "none"
 
 
 @dataclass

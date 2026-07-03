@@ -59,9 +59,9 @@
           },
           "model_name": {
             "description": "模型名称",
-            "hint": "例如 gpt-image-1",
+            "hint": "例如 gpt-image-2",
             "type": "string",
-            "default": "gpt-image-1"
+            "default": "gpt-image-2"
           },
           "retry_count": {
             "description": "重试次数",

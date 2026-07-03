@@ -8,7 +8,7 @@ import aiohttp
 
 from astrbot.api import logger
 
-from ..adapters import GenerationError, ModelConfig, get_adapter
+from ..adapters import GenerationError, ModelConfig, SensitiveContentError, get_adapter
 from .counter import GenerationCounter
 
 Mode = Literal["text_to_image", "image_to_image"]
@@ -62,6 +62,7 @@ class GenerationService:
             raise GenerationError("未配置任何已启用的图像模型")
 
         errors: list[str] = []
+        had_sensitive = False
         timeout = aiohttp.ClientTimeout(total=180)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -96,6 +97,14 @@ class GenerationService:
                         if paths:
                             await self.counter.add_count(model.model_key(), len(paths))
                             return paths, model.display_name
+                    except SensitiveContentError as exc:
+                        # 安全审查失败不重试本模型（相同内容结果不变），
+                        # 记录后继续尝试下一个优先级模型；全部失败再统一上报。
+                        had_sensitive = True
+                        msg = f"{model.display_name}: {exc}"
+                        logger.warning(msg)
+                        errors.append(msg)
+                        break
                     except GenerationError as exc:
                         msg = f"{model.display_name}: {exc}"
                         logger.warning(msg)
@@ -106,6 +115,9 @@ class GenerationService:
                         logger.error(msg)
                         if attempt == retry_count - 1:
                             errors.append(msg)
+
+        if had_sensitive:
+            raise SensitiveContentError(mode)
 
         if any("超出生成张数上限" in item for item in errors):
             raise GenerationError("超出生成张数上限")

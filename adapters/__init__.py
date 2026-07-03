@@ -1,12 +1,13 @@
 """Image generation adapters."""
 
-from .base import GenerationError, ModelConfig
+from .base import GenerationError, ModelConfig, SensitiveContentError
 from .gemini import GeminiAdapter
 from .openai import OpenAIAdapter
 
 __all__ = [
     "GenerationError",
     "ModelConfig",
+    "SensitiveContentError",
     "OpenAIAdapter",
     "GeminiAdapter",
     "get_adapter",

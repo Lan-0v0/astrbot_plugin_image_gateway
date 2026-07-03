@@ -8,7 +8,14 @@ import aiohttp
 
 from astrbot.api import logger
 
-from .base import GenerationError, ModelConfig
+from .base import (
+    GenerationError,
+    ModelConfig,
+    SensitiveContentError,
+    is_safety_moderation_error,
+    moderation_bypass_enabled,
+    sensitive_content_message,
+)
 from ..utils.storage import download_image, save_base64_image
 
 _DATA_URL_PATTERN = re.compile(
@@ -45,6 +52,8 @@ class GeminiAdapter:
                 )
                 paths.extend(batch_paths)
                 remaining -= len(batch_paths)
+            except SensitiveContentError:
+                raise
             except GenerationError as exc:
                 last_error = str(exc)
                 break
@@ -104,7 +113,9 @@ class GeminiAdapter:
         }
 
         safety_attempts = self._safety_attempts(model.moderation)
-        last_error = "Gemini 生图失败"
+        bypass_chain = moderation_bypass_enabled(model.moderation, default="default")
+        mode = "image_to_image" if input_images else "text_to_image"
+        last_error = "Gemini 改图失败" if input_images else "Gemini 生图失败"
 
         for safety_settings in safety_attempts:
             payload = dict(payload_base)
@@ -117,19 +128,28 @@ class GeminiAdapter:
                     return paths[:count] if count else paths
             except GenerationError as exc:
                 last_error = str(exc)
+                if (
+                    bypass_chain
+                    and self._safety_label(safety_settings) == "BLOCK_ONLY_HIGH"
+                    and is_safety_moderation_error(last_error)
+                ):
+                    raise SensitiveContentError(mode) from exc
                 logger.warning(
                     f"[Gemini:{model.display_name}] 尝试 safety={self._safety_label(safety_settings)} 失败: {exc}"
                 )
 
         # OpenAI 兼容 Imagen 网关
-        try:
-            paths = await self._generate_via_openai_compatible(
-                prompt, input_images, count, model, output_dir, session
-            )
-            if paths:
-                return paths
-        except GenerationError as exc:
-            last_error = str(exc)
+        if bypass_chain:
+            try:
+                paths = await self._generate_via_openai_compatible(
+                    prompt, input_images, count, model, output_dir, session
+                )
+                if paths:
+                    return paths
+            except SensitiveContentError:
+                raise
+            except GenerationError as exc:
+                last_error = str(exc)
 
         raise GenerationError(last_error)
 
@@ -143,12 +163,8 @@ class GeminiAdapter:
                 None,
             ]
         if level == "low":
-            return [
-                self._build_safety_settings("BLOCK_ONLY_HIGH"),
-                self._build_safety_settings("BLOCK_MEDIUM_AND_ABOVE"),
-                None,
-            ]
-        return [None, self._build_safety_settings("BLOCK_ONLY_HIGH")]
+            return [self._build_safety_settings("BLOCK_ONLY_HIGH")]
+        return [None]
 
     def _build_safety_settings(self, threshold: str) -> list[dict[str, str]]:
         return [
@@ -201,6 +217,11 @@ class GeminiAdapter:
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
+            finish_reason = str(
+                candidate.get("finishReason") or candidate.get("finish_reason") or ""
+            ).upper()
+            if finish_reason == "SAFETY":
+                raise GenerationError("blocked due to safety filter")
             content = candidate.get("content") or {}
             parts = content.get("parts") or []
             for part in parts:

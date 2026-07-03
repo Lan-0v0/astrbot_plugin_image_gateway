@@ -9,7 +9,14 @@ import aiohttp
 
 from astrbot.api import logger
 
-from .base import GenerationError, ModelConfig
+from .base import (
+    GenerationError,
+    ModelConfig,
+    SensitiveContentError,
+    is_safety_moderation_error,
+    moderation_bypass_enabled,
+    sensitive_content_message,
+)
 from ..utils.storage import download_image, save_base64_image
 
 _DATA_URL_PATTERN = re.compile(
@@ -31,6 +38,7 @@ class OpenAIAdapter:
         url = f"{base_url}/images/generations"
         payload = self._build_generation_payload(prompt, count, model)
         moderation_attempts = self._moderation_attempts(model.moderation)
+        bypass_chain = moderation_bypass_enabled(model.moderation)
 
         last_error = "OpenAI 生图失败"
         for moderation in moderation_attempts:
@@ -44,17 +52,20 @@ class OpenAIAdapter:
                     return paths
             except GenerationError as exc:
                 last_error = str(exc)
+                if bypass_chain and moderation == "low" and is_safety_moderation_error(last_error):
+                    raise SensitiveContentError("text_to_image") from exc
                 logger.warning(f"[OpenAI:{model.display_name}] 生图尝试 moderation={moderation} 失败: {exc}")
 
         # 兼容部分网关仅支持 chat/completions 返回图片
-        try:
-            paths = await self._text_to_image_via_chat(
-                prompt, None, count, model, output_dir, session
-            )
-            if paths:
-                return paths
-        except GenerationError as exc:
-            last_error = str(exc)
+        if bypass_chain:
+            try:
+                paths = await self._text_to_image_via_chat(
+                    prompt, None, count, model, output_dir, session
+                )
+                if paths:
+                    return paths
+            except GenerationError as exc:
+                last_error = str(exc)
 
         raise GenerationError(last_error)
 
@@ -72,6 +83,7 @@ class OpenAIAdapter:
         base_url = self._normalize_base_url(model.url)
         url = f"{base_url}/images/edits"
         moderation_attempts = self._moderation_attempts(model.moderation)
+        bypass_chain = moderation_bypass_enabled(model.moderation)
         image_bytes = base64.b64decode(self._strip_data_url(input_images[0]))
         last_error = "OpenAI 改图失败"
 
@@ -96,16 +108,19 @@ class OpenAIAdapter:
                     return paths
             except GenerationError as exc:
                 last_error = str(exc)
+                if bypass_chain and moderation == "low" and is_safety_moderation_error(last_error):
+                    raise SensitiveContentError("image_to_image") from exc
                 logger.warning(f"[OpenAI:{model.display_name}] 改图尝试 moderation={moderation} 失败: {exc}")
 
-        try:
-            paths = await self._text_to_image_via_chat(
-                prompt, input_images, 1, model, output_dir, session
-            )
-            if paths:
-                return paths
-        except GenerationError as exc:
-            last_error = str(exc)
+        if bypass_chain:
+            try:
+                paths = await self._text_to_image_via_chat(
+                    prompt, input_images, 1, model, output_dir, session
+                )
+                if paths:
+                    return paths
+            except GenerationError as exc:
+                last_error = str(exc)
 
         raise GenerationError(last_error)
 
@@ -124,7 +139,7 @@ class OpenAIAdapter:
         if level == "none":
             return [None, "low", "auto"]
         if level == "low":
-            return ["low", "auto"]
+            return ["low"]
         return ["auto"]
 
     def _build_generation_payload(
