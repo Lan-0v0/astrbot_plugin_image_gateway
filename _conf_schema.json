@@ -1,0 +1,188 @@
+{
+  "enable_nl_trigger": {
+    "description": "启用自然语言触发",
+    "hint": "开启后 LLM 可通过函数工具触发生图/改图；指令始终拥有最高优先级",
+    "type": "bool",
+    "default": true,
+    "obvious_hint": true
+  },
+  "global_retry_count": {
+    "description": "全局默认重试次数",
+    "hint": "单个模型未单独配置（-1）时使用此值",
+    "type": "int",
+    "default": 3,
+    "obvious_hint": true
+  },
+  "global_max_generation_count": {
+    "description": "全局默认最大生成张数上限",
+    "hint": "-1 表示不限制；单模型可单独覆盖，超出后提示「超出生成张数上限」",
+    "type": "int",
+    "default": -1,
+    "obvious_hint": true
+  },
+  "models": {
+    "description": "图像生成模型列表",
+    "hint": "按优先级从高到低尝试；仅启用的模型参与生成",
+    "type": "template_list",
+    "templates": {
+      "openai": {
+        "name": "OpenAI",
+        "hint": "OpenAI Images API 或兼容网关",
+        "display_item": "display_name",
+        "items": {
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": "OpenAI 模型"
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "priority": {
+            "description": "优先级",
+            "hint": "数值越大越优先",
+            "type": "int",
+            "default": 10
+          },
+          "url": {
+            "description": "API 地址",
+            "hint": "例如 https://api.openai.com/v1",
+            "type": "string",
+            "default": "https://api.openai.com/v1"
+          },
+          "apikey": {
+            "description": "API Key",
+            "type": "string",
+            "default": ""
+          },
+          "model_name": {
+            "description": "模型名称",
+            "hint": "例如 gpt-image-1",
+            "type": "string",
+            "default": "gpt-image-1"
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "quality": {
+            "description": "画质",
+            "type": "string",
+            "default": "auto",
+            "options": ["auto", "high", "medium", "low"]
+          },
+          "size": {
+            "description": "尺寸",
+            "type": "string",
+            "default": "1024x1024",
+            "options": ["auto", "1024x1024", "1536x1024", "1024x1536", "256x256", "512x512"]
+          },
+          "moderation": {
+            "description": "内容审核/安全等级",
+            "hint": "none 将尝试多种方式降低过滤强度",
+            "type": "string",
+            "default": "auto",
+            "options": ["none", "low", "auto"],
+            "labels": ["关闭 (none)", "低 (low)", "自动 (auto)"]
+          },
+          "seed": {
+            "description": "随机种子",
+            "hint": "留空表示随机；部分模型/网关不支持",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "gemini": {
+        "name": "Gemini",
+        "hint": "Google Gemini 图像生成或 Imagen 兼容接口",
+        "display_item": "display_name",
+        "items": {
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": "Gemini 模型"
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "priority": {
+            "description": "优先级",
+            "hint": "数值越大越优先",
+            "type": "int",
+            "default": 10
+          },
+          "url": {
+            "description": "API 地址",
+            "hint": "例如 https://generativelanguage.googleapis.com/v1beta",
+            "type": "string",
+            "default": "https://generativelanguage.googleapis.com/v1beta"
+          },
+          "apikey": {
+            "description": "API Key",
+            "type": "string",
+            "default": ""
+          },
+          "model_name": {
+            "description": "模型名称",
+            "hint": "例如 gemini-2.0-flash-preview-image-generation",
+            "type": "string",
+            "default": "gemini-2.0-flash-preview-image-generation"
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "quality": {
+            "description": "画质/输出质量",
+            "hint": "部分网关支持 quality 参数",
+            "type": "string",
+            "default": "auto",
+            "options": ["auto", "high", "medium", "low"]
+          },
+          "size": {
+            "description": "尺寸/宽高比",
+            "hint": "Gemini 原生接口可能忽略此字段",
+            "type": "string",
+            "default": "1024x1024",
+            "options": ["auto", "1024x1024", "1536x1024", "1024x1536", "1:1", "16:9", "9:16"]
+          },
+          "moderation": {
+            "description": "安全过滤等级",
+            "hint": "none 将尝试 BLOCK_NONE 等多种方式，失败后回退到最低等级",
+            "type": "string",
+            "default": "default",
+            "options": ["none", "low", "default"],
+            "labels": ["关闭 (none)", "低 (low)", "默认 (default)"]
+          },
+          "seed": {
+            "description": "随机种子",
+            "hint": "留空表示随机",
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    }
+  }
+}

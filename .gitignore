@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 工具缓存
+.ace-tool/
+.claude/
+.serena/
+.kilocode/
+.kiro/
+
+# 插件运行时数据（AstrBot data 目录下生成，勿提交）
+data/
+images/
+generation_counts.json
+*.log
+
+# 密钥与本地配置
+.env
+.env.*
+*.key
+secrets/
+config.local.*
+
+# 系统文件
+.DS_Store
+Thumbs.db
