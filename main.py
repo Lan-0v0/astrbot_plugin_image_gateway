@@ -11,6 +11,7 @@ import astrbot.api.message_components as Comp
 from astrbot.api.all import Image
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.core.message.message_event_result import MessageChain
 
 from .adapters import GenerationError
 from .services.counter import GenerationCounter
@@ -48,7 +49,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini、优先级回退与自然语言触发",
-    "1.1.1",
+    "1.1.2",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -126,24 +127,84 @@ class ImageGatewayPlugin(Star):
         if not image_paths:
             return
 
-        if len(image_paths) == 1:
-            image_component = await self._build_image_component(image_paths[0])
-            yield event.chain_result([image_component])
+        merged_chain, single_image_chains = await self._build_image_delivery_chains(event, image_paths)
+
+        if merged_chain and await self._send_message_chain_directly(event, merged_chain):
             return
+
+        if len(single_image_chains) == 1:
+            yield event.chain_result(single_image_chains[0])
+            return
+
+        for single_image_chain in single_image_chains:
+            if await self._send_message_chain_directly(event, single_image_chain):
+                continue
+            yield event.chain_result(single_image_chain)
+
+    async def _build_image_delivery_chains(
+        self,
+        event: AstrMessageEvent,
+        image_paths: list[str],
+    ) -> tuple[list[Any], list[list[Any]]]:
+        image_components: list[Image] = []
+        single_image_chains: list[list[Any]] = []
+
+        for index, image_path in enumerate(image_paths, start=1):
+            image_component = await self._build_image_component(image_path)
+            image_components.append(image_component)
+
+            if len(image_paths) == 1:
+                single_image_chains.append([image_component])
+            else:
+                single_image_chains.append(
+                    [Comp.Plain(f"图片 {index}/{len(image_paths)}"), image_component]
+                )
+
+        if len(image_components) == 1:
+            return single_image_chains[0], single_image_chains
 
         nodes: list[Comp.Node] = []
         sender_id = event.get_sender_id()
         sender_name = event.get_sender_name() or "Bot"
-        for index, path in enumerate(image_paths, start=1):
-            image_component = await self._build_image_component(path)
+
+        for index, image_component in enumerate(image_components, start=1):
             nodes.append(
                 Comp.Node(
                     uin=sender_id,
                     name=sender_name,
-                    content=[Comp.Plain(f"图片 {index}/{len(image_paths)}"), image_component],
+                    content=[Comp.Plain(f"图片 {index}/{len(image_components)}"), image_component],
                 )
             )
-        yield event.chain_result([Comp.Nodes(nodes=nodes)])
+
+        return [Comp.Nodes(nodes=nodes)], single_image_chains
+
+    async def _send_message_chain_directly(
+        self,
+        event: AstrMessageEvent,
+        chain_components: list[Any],
+    ) -> bool:
+        message_chain = MessageChain(chain_components)
+
+        event_send_method = getattr(event, "send", None)
+        if callable(event_send_method):
+            try:
+                await event_send_method(message_chain)
+                logger.debug("图片消息已通过 event.send 直接发送")
+                return True
+            except Exception as exc:
+                logger.warning(f"event.send 发送图片失败，尝试下一层回退: {exc}")
+
+        context_send_method = getattr(self.context, "send_message", None)
+        message_origin = getattr(event, "unified_msg_origin", None)
+        if callable(context_send_method) and message_origin:
+            try:
+                await context_send_method(message_origin, message_chain)
+                logger.debug("图片消息已通过 context.send_message 直接发送")
+                return True
+            except Exception as exc:
+                logger.warning(f"context.send_message 发送图片失败，回退结果管道: {exc}")
+
+        return False
 
     async def _build_image_component(self, image_path: str) -> Image:
         callback_api_base = self.context.get_config().get("callback_api_base")

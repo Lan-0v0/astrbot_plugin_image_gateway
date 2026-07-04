@@ -13,6 +13,7 @@ def install_astrbot_test_stubs() -> None:
         return
 
     logger_stub = types.SimpleNamespace(
+        debug=lambda *args, **kwargs: None,
         info=lambda *args, **kwargs: None,
         warning=lambda *args, **kwargs: None,
         error=lambda *args, **kwargs: None,
@@ -26,6 +27,9 @@ def install_astrbot_test_stubs() -> None:
     astrbot_api_star_module = types.ModuleType("astrbot.api.star")
     astrbot_core_module = types.ModuleType("astrbot.core")
     astrbot_core_message_module = types.ModuleType("astrbot.core.message")
+    astrbot_core_message_event_result_module = types.ModuleType(
+        "astrbot.core.message.message_event_result"
+    )
     astrbot_core_message_components_module = types.ModuleType(
         "astrbot.core.message.components"
     )
@@ -56,6 +60,11 @@ def install_astrbot_test_stubs() -> None:
         def get_data_dir(plugin_name: str) -> Path:
             return Path(".")
 
+    class DummyMessageChain(list):
+        def __init__(self, components):
+            super().__init__(components)
+            self.chain = components
+
     def dummy_register(*args, **kwargs):
         def decorator(cls):
             return cls
@@ -81,6 +90,7 @@ def install_astrbot_test_stubs() -> None:
     astrbot_api_star_module.Star = DummyStar
     astrbot_api_star_module.StarTools = DummyStarTools
     astrbot_api_star_module.register = dummy_register
+    astrbot_core_message_event_result_module.MessageChain = DummyMessageChain
     astrbot_core_message_components_module.Reply = DummyReply
 
     sys.modules["astrbot"] = astrbot_module
@@ -91,6 +101,9 @@ def install_astrbot_test_stubs() -> None:
     sys.modules["astrbot.api.star"] = astrbot_api_star_module
     sys.modules["astrbot.core"] = astrbot_core_module
     sys.modules["astrbot.core.message"] = astrbot_core_message_module
+    sys.modules["astrbot.core.message.message_event_result"] = (
+        astrbot_core_message_event_result_module
+    )
     sys.modules["astrbot.core.message.components"] = astrbot_core_message_components_module
 
 
@@ -138,9 +151,13 @@ class FakeClientSession:
 class FakeEvent:
     def __init__(self, message_text: str):
         self.message_str = message_text
+        self.unified_msg_origin = "test-origin"
 
     def plain_result(self, text: str):
         return text
+
+    def chain_result(self, chain):
+        return chain
 
 
 class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -307,6 +324,84 @@ class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
             results.append(result)
 
         self.assertEqual(results, ["超出生成张数上限"])
+
+
+class ImageDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_generated_images_prefers_event_send(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.context = types.SimpleNamespace(get_config=lambda: {})
+
+        async def build_image_component(image_path: str):
+            return f"image:{image_path}"
+
+        plugin_instance._build_image_component = build_image_component
+
+        event = FakeEvent("/生图 测试")
+        event.sent_messages = []
+
+        async def send(message_chain):
+            event.sent_messages.append(message_chain)
+
+        event.send = send
+
+        results = []
+        async for result in plugin_instance._send_generated_images(event, ["one.png"]):
+            results.append(result)
+
+        self.assertEqual(results, [])
+        self.assertEqual(len(event.sent_messages), 1)
+        self.assertEqual(list(event.sent_messages[0]), ["image:one.png"])
+
+    async def test_send_generated_images_falls_back_to_context_send_message(self) -> None:
+        context_sent_messages = []
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.context = types.SimpleNamespace(
+            get_config=lambda: {},
+            send_message=self._build_context_send(context_sent_messages),
+        )
+
+        async def build_image_component(image_path: str):
+            return f"image:{image_path}"
+
+        plugin_instance._build_image_component = build_image_component
+
+        event = FakeEvent("/生图 测试")
+
+        async def failing_send(message_chain):
+            raise RuntimeError("event send unavailable")
+
+        event.send = failing_send
+
+        results = []
+        async for result in plugin_instance._send_generated_images(event, ["one.png"]):
+            results.append(result)
+
+        self.assertEqual(results, [])
+        self.assertEqual(context_sent_messages, [("test-origin", ["image:one.png"])])
+
+    async def test_send_generated_images_falls_back_to_result_pipeline(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.context = types.SimpleNamespace(get_config=lambda: {})
+
+        async def build_image_component(image_path: str):
+            return f"image:{image_path}"
+
+        plugin_instance._build_image_component = build_image_component
+
+        event = FakeEvent("/生图 测试")
+
+        results = []
+        async for result in plugin_instance._send_generated_images(event, ["one.png"]):
+            results.append(result)
+
+        self.assertEqual(results, [["image:one.png"]])
+
+    @staticmethod
+    def _build_context_send(context_sent_messages: list[tuple[str, list[str]]]):
+        async def send_message(message_origin, message_chain):
+            context_sent_messages.append((message_origin, list(message_chain)))
+
+        return send_message
 
 
 class ModerationOptionRegressionTests(unittest.TestCase):
