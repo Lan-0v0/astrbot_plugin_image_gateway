@@ -14,7 +14,7 @@
     "obvious_hint": true
   },
   "global_max_generation_count": {
-    "description": "全局默认最大生成张数上限",
+    "description": "全局默认单次请求最大生成张数上限",
     "hint": "-1 表示不限制；单模型可单独覆盖，超出后提示「超出生成张数上限」",
     "type": "int",
     "default": 2,
@@ -70,7 +70,7 @@
             "default": -1
           },
           "max_generation_count": {
-            "description": "最大生成张数",
+            "description": "单次请求最大生成张数",
             "hint": "-1 表示使用全局默认",
             "type": "int",
             "default": -1
@@ -170,7 +170,7 @@
             "default": -1
           },
           "max_generation_count": {
-            "description": "最大生成张数",
+            "description": "单次请求最大生成张数",
             "hint": "-1 表示使用全局默认",
             "type": "int",
             "default": -1

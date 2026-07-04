@@ -169,6 +169,13 @@ class ImageGatewayPlugin(Star):
     ):
         self._refresh_services()
 
+        try:
+            requested_count = self.generation_service._normalize_requested_count(mode, count)
+            self.generation_service.validate_request_count(requested_count)
+        except GenerationError as exc:
+            yield event.plain_result(str(exc))
+            return
+
         start_message = await self._send_start_message(event, success_label)
         if start_message.sent_passively:
             yield event.plain_result(start_message.text)

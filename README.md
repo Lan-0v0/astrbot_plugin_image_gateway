@@ -9,7 +9,7 @@ AstrBot 多模型图像生成网关插件。统一接入 OpenAI Images API 与 G
 - **自然语言触发**：开启后 LLM 可通过函数工具 `image_gateway_generate` 触发生图（指令始终优先）
 - **智能回退**：当前模型失败或达上限时，自动尝试下一优先级模型
 - **可配置重试**：全局与单模型均可设置重试次数，失败时指数退避等待
-- **生成张数统计**：可按模型限制累计生成张数，防止超额调用
+- **张数上限控制**：可限制单次请求的最大生成张数，避免一次请求生成过多图片
 - **审核力度可调**：OpenAI / Gemini 均支持将审核设为 `none`，并自动尝试多种降级策略
 - **灵活发送**：若 AstrBot 配置了 `callback_api_base`，优先以 URL 发送图片；失败时回退本地文件
 
@@ -56,7 +56,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 |--------|------|--------|
 | `enable_nl_trigger` | 启用自然语言触发。关闭后 LLM 工具无法生图，仅 `/生图`、`/改图` 可用 | `true` |
 | `global_retry_count` | 全局默认重试次数。单模型未单独配置（`-1`）时使用 | `2` |
-| `global_max_generation_count` | 全局默认最大生成张数上限。`-1` 表示不限制 | `2` |
+| `global_max_generation_count` | 全局默认单次请求最大生成张数上限。`-1` 表示不限制 | `2` |
 
 ### 模型列表（`models`）
 
@@ -73,7 +73,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `apikey` | API Key |
 | `model_name` | 模型 ID |
 | `retry_count` | 重试次数，`-1` 表示使用全局默认 |
-| `max_generation_count` | 该模型累计最大生成张数，`-1` 表示使用全局默认；超出后提示「超出生成张数上限」并尝试下一模型 |
+| `max_generation_count` | 该模型单次请求最大生成张数，`-1` 表示使用全局默认；超出后提示「超出生成张数上限」并尝试下一模型 |
 | `quality` / `size` | 画质与尺寸（默认画质为 `high`，部分网关可能忽略） |
 | `moderation` | 内容审核 / 安全过滤等级（见下文） |
 | `seed` | 随机种子，留空表示随机（部分模型不支持） |
@@ -112,7 +112,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 ### 多模型与回退逻辑
 
 1. 筛选已启用模型，按 `priority` 降序排列  
-2. 对每个模型：检查是否超出 `max_generation_count`  
+2. 对每个模型：检查本次请求张数是否超出 `max_generation_count`  
 3. 未超限时按 `retry_count` 重试（间隔约 2^n 秒，上限 10 秒）  
 4. 当前模型全部失败后，自动尝试下一优先级模型  
 5. 所有模型均失败时，返回最后一次错误摘要；仅当所有候选模型都因额度上限被跳过时，才统一返回「超出生成张数上限」
@@ -181,7 +181,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 - 不同 API 网关对 `moderation`、`size`、`seed` 等字段支持程度不同，失败时可查看 AstrBot 日志  
 - OpenAI 适配器在标准 Images API 失败时，会尝试通过 `chat/completions` 兼容部分第三方网关  
 - Gemini 原生接口可能忽略 `size` 等字段，以实际网关行为为准  
-- `max_generation_count` 为**累计计数**（持久化在 `generation_counts.json`），达上限后该模型会被跳过  
+- `max_generation_count` 控制的是**单次请求张数上限**，不是历史累计总量  
 - 改图仅使用第一张输入图；如需多图参考，请自行在提示词中描述或等待后续版本支持  
 - 生成耗时受上游 API 影响，单次请求超时约 180 秒  
 

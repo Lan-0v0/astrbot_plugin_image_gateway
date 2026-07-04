@@ -139,6 +139,9 @@ class FakeEvent:
     def __init__(self, message_text: str):
         self.message_str = message_text
 
+    def plain_result(self, text: str):
+        return text
+
 
 class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
     def build_model(self, display_name: str, *, max_generation_count: int = -1) -> ModelConfig:
@@ -205,9 +208,43 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
             FakeClientSession,
         ):
             with self.assertRaises(GenerationError) as raised_error:
-                await service.generate(mode="text_to_image", prompt="test prompt")
+                await service.generate(mode="text_to_image", prompt="test prompt", count=3)
 
         self.assertEqual(str(raised_error.exception), "超出生成张数上限")
+
+    async def test_historical_generation_count_does_not_trigger_single_request_limit(self) -> None:
+        model = self.build_model("Primary", max_generation_count=2)
+        counter = FakeCounter({model.model_key(): 999})
+        service = GenerationService(
+            [model],
+            global_retry_count=1,
+            global_max_generation_count=2,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        successful_adapter = types.SimpleNamespace(
+            text_to_image=self.return_generated_path,
+            image_to_image=self.return_generated_path,
+        )
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=successful_adapter,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, model_name = await service.generate(mode="image_to_image", prompt="test prompt")
+
+        self.assertEqual(model_name, "Primary")
+        self.assertEqual(paths, [Path("generated.png")])
+
+    async def return_generated_path(self, *args, **kwargs):
+        return [Path("generated.png")]
 
     async def raise_backend_error(self, *args, **kwargs):
         raise GenerationError("后端服务暂时不可用")
@@ -242,6 +279,34 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
             start_message_config.llm_custom_persona_prompt,
             DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
         )
+
+
+class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_quota_error_is_returned_before_start_message(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance._refresh_services = lambda: None
+        plugin_instance.generation_service = types.SimpleNamespace(
+            _normalize_requested_count=lambda mode, count: 3,
+            validate_request_count=lambda requested_count: (_ for _ in ()).throw(GenerationError("超出生成张数上限")),
+        )
+
+        async def fail_if_called(*args, **kwargs):
+            raise AssertionError("开始提示不应在超限前发送")
+
+        plugin_instance._send_start_message = fail_if_called
+
+        results = []
+        async for result in plugin_instance._run_generation(
+            FakeEvent("/生图 测试 3"),
+            mode="text_to_image",
+            prompt="测试",
+            count=3,
+            input_images=None,
+            success_label="生图",
+        ):
+            results.append(result)
+
+        self.assertEqual(results, ["超出生成张数上限"])
 
 
 class ModerationOptionRegressionTests(unittest.TestCase):

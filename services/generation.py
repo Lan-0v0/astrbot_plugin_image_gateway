@@ -58,8 +58,8 @@ class GenerationService:
         count: int = 1,
         input_images: list[str] | None = None,
     ) -> tuple[list[Path], str]:
-        if not self.models:
-            raise GenerationError("未配置任何已启用的图像模型")
+        requested_count = self._normalize_requested_count(mode, count)
+        self.validate_request_count(requested_count)
 
         errors: list[str] = []
         had_sensitive = False
@@ -68,9 +68,7 @@ class GenerationService:
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             for model in self.models:
-                limit = self._resolve_max_count(model)
-                current = await self.counter.get_count(model.model_key())
-                if limit >= 0 and current + max(1, count) > limit:
+                if self._request_count_exceeds_limit(model, requested_count):
                     quota_exhausted_model_count += 1
                     errors.append(f"{model.display_name}: 超出生成张数上限")
                     continue
@@ -89,7 +87,7 @@ class GenerationService:
 
                         if mode == "text_to_image":
                             paths = await adapter.text_to_image(
-                                prompt, count, model, self.output_dir, session
+                                prompt, requested_count, model, self.output_dir, session
                             )
                         else:
                             paths = await adapter.image_to_image(
@@ -128,6 +126,25 @@ class GenerationService:
         if len(brief) > 120:
             brief = brief[:117] + "..."
         raise GenerationError(brief)
+
+    def validate_request_count(self, requested_count: int) -> None:
+        if not self.models:
+            raise GenerationError("未配置任何已启用的图像模型")
+
+        if any(not self._request_count_exceeds_limit(model, requested_count) for model in self.models):
+            return
+
+        raise GenerationError("超出生成张数上限")
+
+    @staticmethod
+    def _normalize_requested_count(mode: Mode, count: int) -> int:
+        if mode == "image_to_image":
+            return 1
+        return max(1, count)
+
+    def _request_count_exceeds_limit(self, model: ModelConfig, requested_count: int) -> bool:
+        limit = self._resolve_max_count(model)
+        return limit >= 0 and requested_count > limit
 
     def _resolve_retry_count(self, model: ModelConfig) -> int:
         if model.retry_count and model.retry_count > 0:
