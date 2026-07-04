@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from astrbot.api import logger
 from astrbot.api.all import Image
 from astrbot.core.message.components import Reply
@@ -31,18 +33,28 @@ async def collect_input_images(event) -> list[str]:
 
 
 def parse_command_text(event, command_name: str) -> str:
-    """Extract trailing text after a slash command from the raw message string."""
+    """Extract trailing text after a slash command from the raw message string.
+
+    The parser accepts both standard whitespace-separated forms and punctuation-separated
+    forms such as ``/改图，生成奶龙捧腹大笑`` or ``改图：变成奶龙捧腹大笑`` so explicit commands do not
+    fall through to the natural-language LLM path.
+    """
     raw = (getattr(event, "message_str", None) or "").strip()
     if not raw:
         return ""
 
-    prefixes = [
-        f"/{command_name}",
-        f"/ {command_name}",
-    ]
-    for prefix in prefixes:
-        if raw.startswith(prefix):
-            return raw[len(prefix) :].strip()
+    normalized = re.sub(r"\s+", " ", raw)
+    delimiter_pattern = r"(?:\s+|[，,、:：;；。.!！？?]+)"
+    command_pattern = re.compile(
+        rf"^(?:/|／)?\s*{re.escape(command_name)}(?:{delimiter_pattern}(?P<prompt>.*)|$)"
+    )
+    match = command_pattern.match(normalized)
+    if match:
+        return (match.group("prompt") or "").strip()
+
+    for prefix in [f"/{command_name}", f"/ {command_name}", f"／{command_name}", f"／ {command_name}"]:
+        if normalized.startswith(prefix):
+            return normalized[len(prefix) :].strip()
     return ""
 
 

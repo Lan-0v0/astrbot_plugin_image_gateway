@@ -63,6 +63,7 @@ class GenerationService:
 
         errors: list[str] = []
         had_sensitive = False
+        quota_exhausted_model_count = 0
         timeout = aiohttp.ClientTimeout(total=180)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -70,6 +71,7 @@ class GenerationService:
                 limit = self._resolve_max_count(model)
                 current = await self.counter.get_count(model.model_key())
                 if limit >= 0 and current + max(1, count) > limit:
+                    quota_exhausted_model_count += 1
                     errors.append(f"{model.display_name}: 超出生成张数上限")
                     continue
 
@@ -119,7 +121,7 @@ class GenerationService:
         if had_sensitive:
             raise SensitiveContentError(mode)
 
-        if any("超出生成张数上限" in item for item in errors):
+        if quota_exhausted_model_count == len(self.models):
             raise GenerationError("超出生成张数上限")
 
         brief = errors[-1] if errors else "所有模型均生成失败"

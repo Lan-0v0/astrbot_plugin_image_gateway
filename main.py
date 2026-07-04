@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+import random
+import re
 import time
+from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 import astrbot.api.message_components as Comp
@@ -14,13 +18,34 @@ from .services.generation import GenerationService
 from .utils.messages import collect_input_images, parse_command_text, parse_count_and_prompt
 
 PLUGIN_NAME = "astrbot_plugin_image_gateway"
+DEFAULT_START_MESSAGES = ["开始生成"]
+LLM_START_MESSAGE_PROMPT_TEMPLATE = (
+    "请用简短自然的中文，向用户发送一句{label}开始前的提示。"
+    "只输出一句话，不要换行，不要解释，不要表情，不要引号，长度尽量控制在12个字以内。"
+)
+
+
+@dataclass(slots=True)
+class GenerationStartMessageConfig:
+    mode: str = "fixed"
+    fixed_messages: list[str] = field(default_factory=lambda: ["开始生成"])
+    llm_provider_id: str = ""
+    llm_persona_source: str = "current"
+    llm_custom_persona_prompt: str = ""
+
+
+@dataclass(slots=True)
+class StartMessageDispatchResult:
+    text: str
+    message_id: str | None = None
+    sent_passively: bool = False
 
 
 @register(
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini、优先级回退与自然语言触发",
-    "1.0.0",
+    "1.1.0",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -39,6 +64,58 @@ class ImageGatewayPlugin(Star):
             GenerationCounter(counter_file),
         )
         self.enable_nl_trigger = bool(self.plugin_config.get("enable_nl_trigger", True))
+        self.start_message_config = self._load_start_message_config(
+            self.plugin_config.get("generation_start_message")
+        )
+
+    def _load_start_message_config(
+        self,
+        raw_config: Any,
+    ) -> GenerationStartMessageConfig:
+        config_dict = raw_config if isinstance(raw_config, dict) else {}
+
+        mode = str(config_dict.get("mode") or "fixed").strip().lower()
+        if mode not in {"fixed", "llm"}:
+            mode = "fixed"
+
+        fixed_messages = self._normalize_message_list(
+            config_dict.get("fixed_messages"),
+            fallback=DEFAULT_START_MESSAGES,
+        )
+
+        llm_provider_id = str(config_dict.get("llm_provider_id") or "").strip()
+
+        llm_persona_source = str(config_dict.get("llm_persona_source") or "current").strip().lower()
+        if llm_persona_source not in {"current", "custom"}:
+            llm_persona_source = "current"
+
+        llm_custom_persona_prompt = str(config_dict.get("llm_custom_persona_prompt") or "").strip()
+
+        return GenerationStartMessageConfig(
+            mode=mode,
+            fixed_messages=fixed_messages,
+            llm_provider_id=llm_provider_id,
+            llm_persona_source=llm_persona_source,
+            llm_custom_persona_prompt=llm_custom_persona_prompt,
+        )
+
+    @staticmethod
+    def _normalize_message_list(raw_values: Any, *, fallback: list[str]) -> list[str]:
+        normalized_values: list[str] = []
+
+        if isinstance(raw_values, list):
+            iterable_values = raw_values
+        elif isinstance(raw_values, str):
+            iterable_values = [raw_values]
+        else:
+            iterable_values = []
+
+        for raw_value in iterable_values:
+            text = str(raw_value or "").strip()
+            if text and text not in normalized_values:
+                normalized_values.append(text)
+
+        return normalized_values or list(fallback)
 
     async def _send_generated_images(self, event: AstrMessageEvent, image_paths: list[str]):
         if not image_paths:
@@ -86,6 +163,11 @@ class ImageGatewayPlugin(Star):
         success_label: str,
     ):
         self._refresh_services()
+
+        start_message = await self._send_start_message(event, success_label)
+        if start_message.sent_passively:
+            yield event.plain_result(start_message.text)
+
         started = time.time()
 
         try:
@@ -96,26 +178,241 @@ class ImageGatewayPlugin(Star):
                 input_images=input_images,
             )
         except GenerationError as exc:
+            await self._retract_start_message(event, start_message.message_id)
             yield event.plain_result(str(exc))
             return
         except Exception as exc:
             logger.error(f"图像生成异常: {exc}")
+            await self._retract_start_message(event, start_message.message_id)
             yield event.plain_result("图像生成失败，请稍后重试")
             return
 
         elapsed = time.time() - started
         yield event.plain_result(f"{success_label}成功，用时{elapsed:.1f}秒")
+        await self._retract_start_message(event, start_message.message_id)
         async for result in self._send_generated_images(event, [str(path) for path in paths]):
             yield result
 
-    @filter.command("生图")
-    async def text_to_image_command(
+    async def _send_start_message(
         self,
         event: AstrMessageEvent,
+        label: str,
+    ) -> StartMessageDispatchResult:
+        message_text = await self._build_generation_start_message(event, label)
+        platform = self.context.get_platform_inst(event.get_platform_id())
+        if platform is None:
+            return StartMessageDispatchResult(text=message_text, sent_passively=True)
+
+        try:
+            client = platform.get_client()
+        except Exception as exc:
+            logger.warning(f"获取平台客户端失败，回退被动发送: {exc}")
+            return StartMessageDispatchResult(text=message_text, sent_passively=True)
+
+        if client is None or not hasattr(client, "call_action"):
+            return StartMessageDispatchResult(text=message_text, sent_passively=True)
+
+        session_id = event.get_group_id() or event.get_sender_id()
+        if not session_id or not str(session_id).isdigit():
+            return StartMessageDispatchResult(text=message_text, sent_passively=True)
+
+        try:
+            if event.get_group_id():
+                response = await client.call_action(
+                    "send_group_msg",
+                    group_id=int(session_id),
+                    message=message_text,
+                )
+            else:
+                response = await client.call_action(
+                    "send_private_msg",
+                    user_id=int(session_id),
+                    message=message_text,
+                )
+
+            message_id = self._extract_message_id(response)
+            return StartMessageDispatchResult(
+                text=message_text,
+                message_id=message_id,
+            )
+        except Exception as exc:
+            logger.warning(f"发送开始提示失败，回退被动发送: {exc}")
+
+        return StartMessageDispatchResult(text=message_text, sent_passively=True)
+
+    async def _retract_start_message(
+        self,
+        event: AstrMessageEvent,
+        message_id: str | None,
+    ) -> None:
+        if not message_id:
+            return
+
+        platform = self.context.get_platform_inst(event.get_platform_id())
+        if platform is None:
+            return
+
+        try:
+            client = platform.get_client()
+        except Exception as exc:
+            logger.warning(f"获取平台客户端失败，无法撤回开始提示: {exc}")
+            return
+
+        if client is None or not hasattr(client, "call_action"):
+            return
+
+        try:
+            await client.call_action("delete_msg", message_id=int(message_id))
+        except Exception as exc:
+            logger.warning(f"撤回开始提示失败: {exc}")
+
+    async def _build_generation_start_message(
+        self,
+        event: AstrMessageEvent,
+        label: str,
+    ) -> str:
+        if self.start_message_config.mode == "llm":
+            llm_message = await self._generate_llm_start_message(event, label)
+            if llm_message:
+                return llm_message
+            logger.warning("LLM 开始提示生成失败，回退固定语句")
+
+        return random.choice(self.start_message_config.fixed_messages)
+
+    async def _generate_llm_start_message(
+        self,
+        event: AstrMessageEvent,
+        label: str,
+    ) -> str:
+        provider_id = self._resolve_start_message_provider_id(event)
+        if not provider_id:
+            logger.warning("未找到可用的 LLM 提供商，无法使用 LLM 开始提示")
+            return ""
+
+        system_prompt = await self._resolve_start_message_persona_prompt(event)
+        prompt = LLM_START_MESSAGE_PROMPT_TEMPLATE.format(label=label)
+
+        try:
+            llm_response = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt=system_prompt or None,
+            )
+        except Exception as exc:
+            logger.warning(f"LLM 开始提示生成失败: {exc}")
+            return ""
+
+        completion_text = getattr(llm_response, "completion_text", "") or ""
+        return self._clean_start_message_text(completion_text)
+
+    def _resolve_start_message_provider_id(self, event: AstrMessageEvent) -> str | None:
+        configured_provider_id = self.start_message_config.llm_provider_id
+        if configured_provider_id:
+            return configured_provider_id
+
+        try:
+            current_provider = self.context.get_using_provider(event.unified_msg_origin)
+            if current_provider:
+                return current_provider.meta().id
+        except Exception as exc:
+            logger.warning(f"获取当前默认提供商失败: {exc}")
+
+        try:
+            available_providers = self.context.get_all_providers()
+            if available_providers:
+                return available_providers[0].meta().id
+        except Exception as exc:
+            logger.warning(f"获取可用提供商列表失败: {exc}")
+
+        return None
+
+    async def _resolve_start_message_persona_prompt(
+        self,
+        event: AstrMessageEvent,
+    ) -> str:
+        if self.start_message_config.llm_persona_source == "custom":
+            custom_prompt = self.start_message_config.llm_custom_persona_prompt.strip()
+            if custom_prompt:
+                return custom_prompt
+            logger.warning("自定义人设提示词为空，回退到当前人设")
+
+        try:
+            conversation_id = await self.context.conversation_manager.get_curr_conversation_id(
+                event.unified_msg_origin,
+            )
+            conversation_persona_id = None
+            if conversation_id:
+                conversation = await self.context.conversation_manager.get_conversation(
+                    event.unified_msg_origin,
+                    conversation_id,
+                )
+                if conversation:
+                    conversation_persona_id = conversation.persona_id
+
+            provider_settings = dict(
+                self.context.get_config(event.unified_msg_origin).get("provider_settings", {}),
+            )
+            _, selected_persona, _, _ = await self.context.persona_manager.resolve_selected_persona(
+                umo=event.unified_msg_origin,
+                conversation_persona_id=conversation_persona_id,
+                platform_name=event.get_platform_name(),
+                provider_settings=provider_settings,
+            )
+            if selected_persona and selected_persona.get("prompt"):
+                return str(selected_persona["prompt"]).strip()
+        except Exception as exc:
+            logger.warning(f"获取当前人设失败: {exc}")
+
+        try:
+            default_persona = await self.context.persona_manager.get_default_persona_v3(
+                event.unified_msg_origin,
+            )
+            if default_persona and default_persona.get("prompt"):
+                return str(default_persona["prompt"]).strip()
+        except Exception as exc:
+            logger.warning(f"获取默认人设失败: {exc}")
+
+        return ""
+
+    @staticmethod
+    def _clean_start_message_text(text: str) -> str:
+        cleaned_text = (text or "").strip()
+        if not cleaned_text:
+            return ""
+
+        cleaned_text = cleaned_text.splitlines()[0].strip()
+        cleaned_text = re.sub(r"\s+", " ", cleaned_text)
+        cleaned_text = cleaned_text.strip("`\"'“”‘’")
+        cleaned_text = re.sub(r"^[：:—\-]+", "", cleaned_text).strip()
+        return cleaned_text
+
+    @staticmethod
+    def _extract_message_id(response: Any) -> str | None:
+        if response is None:
+            return None
+
+        if isinstance(response, dict):
+            if response.get("message_id") is not None:
+                return str(response["message_id"])
+
+            data = response.get("data")
+            if isinstance(data, dict) and data.get("message_id") is not None:
+                return str(data["message_id"])
+
+        if isinstance(response, (int, str)):
+            message_id = str(response).strip()
+            return message_id or None
+
+        return None
+
+    async def _handle_text_to_image_request(
+        self,
+        event: AstrMessageEvent,
+        *,
         prompt: str = "",
         count: int = 1,
     ):
-        """文字生图：`/生图 {prompt} {count?}`"""
+        event.stop_event()
         text = prompt.strip() or parse_command_text(event, "生图")
         prompt_text, image_count = parse_count_and_prompt(text, default_count=count or 1)
 
@@ -132,9 +429,13 @@ class ImageGatewayPlugin(Star):
         ):
             yield result
 
-    @filter.command("改图")
-    async def image_to_image_command(self, event: AstrMessageEvent, prompt: str = ""):
-        """图片改图：`/改图 {prompt}`，需附带或引用一张图片"""
+    async def _handle_image_to_image_request(
+        self,
+        event: AstrMessageEvent,
+        *,
+        prompt: str = "",
+    ):
+        event.stop_event()
         prompt_text = prompt.strip() or parse_command_text(event, "改图")
         if not prompt_text:
             yield event.plain_result("缺少改图提示词")
@@ -152,6 +453,39 @@ class ImageGatewayPlugin(Star):
             input_images=input_images,
             success_label="改图",
         ):
+            yield result
+
+    @filter.command("生图")
+    async def text_to_image_command(
+        self,
+        event: AstrMessageEvent,
+        prompt: str = "",
+        count: int = 1,
+    ):
+        """文字生图：`/生图 {prompt} {count?}`"""
+        async for result in self._handle_text_to_image_request(
+            event,
+            prompt=prompt,
+            count=count,
+        ):
+            yield result
+
+    @filter.regex(r"^(?:/|／)?\s*生图[，,、:：;；。.!！？?]+\s*.*$")
+    async def punctuated_text_to_image_command(self, event: AstrMessageEvent):
+        """兼容 `/生图，xxx` 这类带中文标点的指令。"""
+        async for result in self._handle_text_to_image_request(event):
+            yield result
+
+    @filter.command("改图")
+    async def image_to_image_command(self, event: AstrMessageEvent, prompt: str = ""):
+        """图片改图：`/改图 {prompt}`，需附带或引用一张图片"""
+        async for result in self._handle_image_to_image_request(event, prompt=prompt):
+            yield result
+
+    @filter.regex(r"^(?:/|／)?\s*改图[，,、:：;；。.!！？?]+\s*.*$")
+    async def punctuated_image_to_image_command(self, event: AstrMessageEvent):
+        """兼容 `/改图，xxx` 这类带中文标点的指令。"""
+        async for result in self._handle_image_to_image_request(event):
             yield result
 
     @filter.llm_tool(name="image_gateway_generate")

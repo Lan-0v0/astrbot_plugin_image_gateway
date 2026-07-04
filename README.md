@@ -34,7 +34,7 @@ AstrBot/data/plugins/astrbot_plugin_image_gateway
 在 AstrBot WebUI 插件管理中，使用本仓库 Git 地址安装（发布到 GitHub 后填写实际 URL）：
 
 ```
-https://github.com/<你的用户名>/astrbot_plugin_image_gateway
+https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 ```
 
 ## 依赖
@@ -78,6 +78,23 @@ https://github.com/<你的用户名>/astrbot_plugin_image_gateway
 | `moderation` | 内容审核 / 安全过滤等级（见下文） |
 | `seed` | 随机种子，留空表示随机（部分模型不支持） |
 
+### 生图开始提示（`generation_start_message`）
+
+用于控制在真正开始生成前发送的提示语，位置在「图像生成模型列表」后方。支持两种模式：
+
+- **固定语句**：默认模式；只提供一组预设文案，发送时随机选取一条
+- **LLM**：可选择 AstrBot 中已配置的模型提供商，或沿用默认提供商；同时可切换使用当前人设或自定义人设提示词
+
+配置项如下：
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `mode` | 提示语模式。`fixed` 为固定语句，`llm` 为 LLM 生成 | `fixed` |
+| `fixed_messages` | 固定语句列表。固定语句模式下随机发送 | `['开始生成']` |
+| `llm_provider_id` | LLM 提示语使用的提供商；留空则跟随当前默认配置 | `''` |
+| `llm_persona_source` | LLM 提示语使用的人设来源。`current` 为当前人设，`custom` 为自定义人设提示词 | `current` |
+| `llm_custom_persona_prompt` | 自定义人设提示词，仅在 `llm_persona_source=custom` 时生效 | `''` |
+
 ### 审核力度（`moderation`）
 
 **OpenAI** 可选：`none` / `low` / `auto`
@@ -96,7 +113,7 @@ https://github.com/<你的用户名>/astrbot_plugin_image_gateway
 2. 对每个模型：检查是否超出 `max_generation_count`  
 3. 未超限时按 `retry_count` 重试（间隔约 2^n 秒，上限 10 秒）  
 4. 当前模型全部失败后，自动尝试下一优先级模型  
-5. 所有模型均失败时，返回最后一次错误摘要
+5. 所有模型均失败时，返回最后一次错误摘要；仅当所有候选模型都因额度上限被跳过时，才统一返回「超出生成张数上限」
 
 ## 使用说明
 
@@ -114,8 +131,8 @@ https://github.com/<你的用户名>/astrbot_plugin_image_gateway
 **示例：**
 
 ```
-/生图 一只在雨中奔跑的柴犬，电影感
-/生图 赛博朋克城市夜景 4
+/生图 牢大和张雪峰比谁跑的快，电影感
+/生图 原神启动 2
 ```
 
 ### `/改图` — 图片改图
@@ -132,7 +149,7 @@ https://github.com/<你的用户名>/astrbot_plugin_image_gateway
 
 ```
 （附带一张人像照片）
-/改图 改成水彩插画风格，保留人物五官
+/改图 把脸P上黑曼巴，笑容四溢
 ```
 
 ### 自然语言触发
@@ -147,12 +164,14 @@ https://github.com/<你的用户名>/astrbot_plugin_image_gateway
 
 ## 输出行为
 
-1. 生成成功后，先发送一条文本：`生图成功，用时X.X秒` 或 `改图成功，用时X.X秒`  
-2. 随后发送图片：  
-   - **单张**：直接发送图片消息  
-   - **多张**：以合并转发节点形式发送，每条带 `图片 1/N` 文字说明  
-3. 图片保存在插件数据目录 `data/plugin_data/astrbot_plugin_image_gateway/images/`（由 AstrBot 运行时管理，无需手动创建）  
-4. 若 AstrBot 主配置中设置了 `callback_api_base`，会尝试将图片转为可访问 URL 发送；转换失败则回退为本地文件发送  
+1. 生成开始时会先发送一条开始提示：固定语句模式下随机发送一条预设文案；LLM 模式下由所选提供商根据人设生成
+2. 生成成功后，先发送一条文本：`生图成功，用时X.X秒` 或 `改图成功，用时X.X秒`
+2. 随后发送图片：
+   - **单张**：直接发送图片消息
+   - **多张**：以合并转发节点形式发送，每条带 `图片 1/N` 文字说明
+3. 生成结束后会自动撤回前面发送的开始提示；如果平台不支持撤回，插件会自动忽略该步骤
+4. 图片保存在插件数据目录 `data/plugin_data/astrbot_plugin_image_gateway/images/`（由 AstrBot 运行时管理，无需手动创建）
+5. 若 AstrBot 主配置中设置了 `callback_api_base`，会尝试将图片转为可访问 URL 发送；转换失败则回退为本地文件发送
 
 ## 注意事项
 

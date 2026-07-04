@@ -1,8 +1,8 @@
 name: astrbot_plugin_image_gateway
 display_name: 图像网关
-desc: 修复Gemini相关逻辑bug，优化图像模型生成逻辑顺序
+desc: 优化多模型额度上限回退逻辑，完善开始提示与命令触发体验
 short_desc: OpenAI/Gemini 多模型生图与改图网关
-version: 1.0.1
+version: 1.1.0
 author: AstrBot
-repo: ""
+repo: "https://github.com/Lan-0v0/astrbot_plugin_image_gateway"
 astrbot_version: ">=4.9.2,<5"

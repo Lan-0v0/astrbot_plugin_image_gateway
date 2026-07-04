@@ -79,21 +79,41 @@
             "description": "画质",
             "type": "string",
             "default": "auto",
-            "options": ["auto", "high", "medium", "low"]
+            "options": [
+              "auto",
+              "high",
+              "medium",
+              "low"
+            ]
           },
           "size": {
             "description": "尺寸",
             "type": "string",
             "default": "1024x1024",
-            "options": ["auto", "1024x1024", "1536x1024", "1024x1536", "256x256", "512x512"]
+            "options": [
+              "auto",
+              "1024x1024",
+              "1536x1024",
+              "1024x1536",
+              "256x256",
+              "512x512"
+            ]
           },
           "moderation": {
             "description": "内容审核/安全等级",
             "hint": "none 将尝试多种方式降低过滤强度",
             "type": "string",
             "default": "auto",
-            "options": ["none", "low", "auto"],
-            "labels": ["关闭 (none)", "低 (low)", "自动 (auto)"]
+            "options": [
+              "none",
+              "low",
+              "auto"
+            ],
+            "labels": [
+              "关闭 (none)",
+              "低 (low)",
+              "自动 (auto)"
+            ]
           },
           "seed": {
             "description": "随机种子",
@@ -158,22 +178,43 @@
             "hint": "部分网关支持 quality 参数",
             "type": "string",
             "default": "auto",
-            "options": ["auto", "high", "medium", "low"]
+            "options": [
+              "auto",
+              "high",
+              "medium",
+              "low"
+            ]
           },
           "size": {
             "description": "尺寸/宽高比",
             "hint": "Gemini 原生接口可能忽略此字段",
             "type": "string",
             "default": "1024x1024",
-            "options": ["auto", "1024x1024", "1536x1024", "1024x1536", "1:1", "16:9", "9:16"]
+            "options": [
+              "auto",
+              "1024x1024",
+              "1536x1024",
+              "1024x1536",
+              "1:1",
+              "16:9",
+              "9:16"
+            ]
           },
           "moderation": {
             "description": "安全过滤等级",
             "hint": "none 将尝试 BLOCK_NONE 等多种方式，失败后回退到最低等级",
             "type": "string",
             "default": "default",
-            "options": ["none", "low", "default"],
-            "labels": ["关闭 (none)", "低 (low)", "默认 (default)"]
+            "options": [
+              "none",
+              "low",
+              "default"
+            ],
+            "labels": [
+              "关闭 (none)",
+              "低 (low)",
+              "默认 (default)"
+            ]
           },
           "seed": {
             "description": "随机种子",
@@ -181,6 +222,73 @@
             "type": "string",
             "default": ""
           }
+        }
+      }
+    }
+  },
+  "generation_start_message": {
+    "description": "生图开始提示",
+    "hint": "控制开始生成前发送的提示语；支持固定语句随机发送或 LLM 生成",
+    "type": "object",
+    "items": {
+      "mode": {
+        "description": "提示语模式",
+        "type": "string",
+        "default": "fixed",
+        "options": [
+          "fixed",
+          "llm"
+        ],
+        "labels": [
+          "固定语句",
+          "LLM"
+        ]
+      },
+      "fixed_messages": {
+        "description": "固定语句列表",
+        "hint": "固定语句模式下随机发送，默认为「开始生成」",
+        "type": "list",
+        "default": [
+          "开始生成"
+        ],
+        "condition": {
+          "mode": "fixed"
+        }
+      },
+      "llm_provider_id": {
+        "description": "LLM 提示语提供商",
+        "hint": "留空则跟随当前默认提供商",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+          "mode": "llm"
+        }
+      },
+      "llm_persona_source": {
+        "description": "LLM 提示语人设来源",
+        "type": "string",
+        "default": "current",
+        "options": [
+          "current",
+          "custom"
+        ],
+        "labels": [
+          "使用当前人设",
+          "自定义人设提示词"
+        ],
+        "condition": {
+          "mode": "llm"
+        }
+      },
+      "llm_custom_persona_prompt": {
+        "description": "自定义人设提示词",
+        "type": "text",
+        "default": "",
+        "hint": "仅在选择自定义人设提示词时生效",
+        "condition": {
+          "mode": "llm",
+          "llm_persona_source": "custom"
         }
       }
     }
