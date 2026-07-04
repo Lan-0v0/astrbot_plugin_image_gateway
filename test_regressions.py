@@ -38,6 +38,20 @@ def install_astrbot_test_stubs() -> None:
         async def convert_to_base64(self) -> str:
             return "stub-image"
 
+    class DummyPlain:
+        def __init__(self, text: str):
+            self.text = text
+
+    class DummyNode:
+        def __init__(self, uin=None, name=None, content=None):
+            self.uin = uin
+            self.name = name
+            self.content = content or []
+
+    class DummyNodes:
+        def __init__(self, nodes=None):
+            self.nodes = nodes or []
+
     class DummyReply:
         def __init__(self, chain=None):
             self.chain = chain or []
@@ -86,6 +100,9 @@ def install_astrbot_test_stubs() -> None:
     astrbot_api_all_module.Image = DummyImage
     astrbot_api_event_module.AstrMessageEvent = DummyAstrMessageEvent
     astrbot_api_event_module.filter = DummyFilterProxy()
+    astrbot_api_message_components_module.Plain = DummyPlain
+    astrbot_api_message_components_module.Node = DummyNode
+    astrbot_api_message_components_module.Nodes = DummyNodes
     astrbot_api_star_module.Context = DummyContext
     astrbot_api_star_module.Star = DummyStar
     astrbot_api_star_module.StarTools = DummyStarTools
@@ -118,6 +135,7 @@ from astrbot_plugin_image_gateway.adapters.openai import OpenAIAdapter  # noqa: 
 from astrbot_plugin_image_gateway.main import (  # noqa: E402
     DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
     ImageGatewayPlugin,
+    StartMessageDispatchResult,
 )
 from astrbot_plugin_image_gateway.services.generation import GenerationService  # noqa: E402
 from astrbot_plugin_image_gateway.utils.messages import parse_command_text  # noqa: E402
@@ -402,6 +420,63 @@ class ImageDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
             context_sent_messages.append((message_origin, list(message_chain)))
 
         return send_message
+
+
+class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_run_generation_sends_success_text_before_image_directly(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance._refresh_services = lambda: None
+        plugin_instance.context = types.SimpleNamespace(get_config=lambda: {})
+        plugin_instance.generation_service = types.SimpleNamespace(
+            _normalize_requested_count=lambda mode, count: 1,
+            validate_request_count=lambda requested_count: None,
+            generate=self._build_generate_result([Path("generated.png")]),
+        )
+
+        async def build_image_component(image_path: str):
+            return f"image:{image_path}"
+
+        async def retract_start_message(event, message_id):
+            return None
+
+        plugin_instance._build_image_component = build_image_component
+        plugin_instance._send_start_message = self._build_start_message_result
+        plugin_instance._retract_start_message = retract_start_message
+
+        event = FakeEvent("/改图 测试")
+        event.sent_messages = []
+
+        async def send(message_chain):
+            event.sent_messages.append(list(message_chain))
+
+        event.send = send
+
+        results = []
+        async for result in plugin_instance._run_generation(
+            event,
+            mode="image_to_image",
+            prompt="测试",
+            count=1,
+            input_images=["stub-image"],
+            success_label="改图",
+        ):
+            results.append(result)
+
+        self.assertEqual(results, [])
+        self.assertEqual(len(event.sent_messages), 2)
+        self.assertEqual(event.sent_messages[0][0].text.startswith("改图成功，用时"), True)
+        self.assertEqual(event.sent_messages[1], ["image:generated.png"])
+
+    @staticmethod
+    async def _build_start_message_result(event, label):
+        return StartMessageDispatchResult(text="开始生成", message_id="1", sent_passively=False)
+
+    @staticmethod
+    def _build_generate_result(paths: list[Path]):
+        async def generate(**kwargs):
+            return paths, "Test Model"
+
+        return generate
 
 
 class ModerationOptionRegressionTests(unittest.TestCase):

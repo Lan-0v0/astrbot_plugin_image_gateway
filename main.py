@@ -49,7 +49,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini、优先级回退与自然语言触发",
-    "1.1.2",
+    "1.1.3",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -206,6 +206,50 @@ class ImageGatewayPlugin(Star):
 
         return False
 
+    async def _send_plain_text_directly(
+        self,
+        event: AstrMessageEvent,
+        text: str,
+    ) -> bool:
+        if await self._send_message_chain_directly(event, [Comp.Plain(text)]):
+            return True
+
+        platform = self.context.get_platform_inst(event.get_platform_id())
+        if platform is None:
+            return False
+
+        try:
+            client = platform.get_client()
+        except Exception as exc:
+            logger.warning(f"获取平台客户端失败，文本主动发送不可用: {exc}")
+            return False
+
+        if client is None or not hasattr(client, "call_action"):
+            return False
+
+        session_id = event.get_group_id() or event.get_sender_id()
+        if not session_id or not str(session_id).isdigit():
+            return False
+
+        try:
+            if event.get_group_id():
+                await client.call_action(
+                    "send_group_msg",
+                    group_id=int(session_id),
+                    message=text,
+                )
+            else:
+                await client.call_action(
+                    "send_private_msg",
+                    user_id=int(session_id),
+                    message=text,
+                )
+            logger.debug("文本消息已通过平台客户端直接发送")
+            return True
+        except Exception as exc:
+            logger.warning(f"平台客户端直接发送文本失败，回退结果管道: {exc}")
+            return False
+
     async def _build_image_component(self, image_path: str) -> Image:
         callback_api_base = self.context.get_config().get("callback_api_base")
         if not callback_api_base:
@@ -239,7 +283,8 @@ class ImageGatewayPlugin(Star):
 
         start_message = await self._send_start_message(event, success_label)
         if start_message.sent_passively:
-            yield event.plain_result(start_message.text)
+            if not await self._send_plain_text_directly(event, start_message.text):
+                yield event.plain_result(start_message.text)
 
         started = time.time()
 
@@ -261,8 +306,17 @@ class ImageGatewayPlugin(Star):
             return
 
         elapsed = time.time() - started
-        yield event.plain_result(f"{success_label}成功，用时{elapsed:.1f}秒")
+        success_message_text = f"{success_label}成功，用时{elapsed:.1f}秒"
+        success_message_sent_directly = await self._send_plain_text_directly(
+            event,
+            success_message_text,
+        )
         await self._retract_start_message(event, start_message.message_id)
+
+        if not success_message_sent_directly:
+            yield event.plain_result(success_message_text)
+            return
+
         async for result in self._send_generated_images(event, [str(path) for path in paths]):
             yield result
 
