@@ -49,3 +49,20 @@ async def download_image(
     async with aiofiles.open(image_path, "wb") as file:
         await file.write(content)
     return image_path
+
+
+async def save_binary_image(
+    image_bytes: bytes,
+    output_dir: Path,
+    *,
+    prefix: str = "image",
+    fmt: str = "png",
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    image_path = output_dir / f"{prefix}_{timestamp}_{unique_id}.{fmt}"
+    async with aiofiles.open(image_path, "wb") as file:
+        await file.write(image_bytes)
+    logger.debug(f"Saved image to {image_path}")
+    return image_path

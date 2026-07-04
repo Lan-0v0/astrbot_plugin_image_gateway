@@ -122,6 +122,28 @@
             "hint": "留空表示随机；部分模型/网关不支持",
             "type": "string",
             "default": ""
+          },
+          "send_strategy": {
+            "description": "发送链路",
+            "hint": "跟随全局表示使用最底部的「全局发送链路」配置；也可为该模型单独指定",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
           }
         }
       },
@@ -225,8 +247,203 @@
             "hint": "留空表示随机",
             "type": "string",
             "default": ""
+          },
+          "send_strategy": {
+            "description": "发送链路",
+            "hint": "跟随全局表示使用最底部的「全局发送链路」配置；也可为该模型单独指定",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
           }
         }
+      }
+    }
+  },
+  "workflows": {
+    "description": "工作流（Workflow）列表",
+    "hint": "第一版仅支持 ComfyUI 文生图工作流；与图像生成模型列表统一参与调度，按优先级从高到低尝试",
+    "type": "template_list",
+    "templates": {
+      "comfyui": {
+        "name": "ComfyUI",
+        "hint": "需要粘贴 ComfyUI 使用“导出（API 格式）”得到的完整工作流 JSON",
+        "display_item": "display_name",
+        "items": {
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": "ComfyUI 工作流"
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "priority": {
+            "description": "优先级",
+            "hint": "数值越大越优先；与图像生成模型列表共用同一套优先级顺序",
+            "type": "int",
+            "default": 10
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "workflow_type": {
+            "description": "工作流类型",
+            "hint": "当前仅支持 ComfyUI",
+            "type": "string",
+            "default": "comfyui",
+            "options": [
+              "comfyui"
+            ]
+          },
+          "runtime_base_url_override": {
+            "description": "ComfyUI 地址覆盖",
+            "hint": "留空则使用下方「ComfyUI 运行环境（全局默认）」配置",
+            "type": "string",
+            "default": ""
+          },
+          "runtime_api_key_override": {
+            "description": "ComfyUI 鉴权 Token 覆盖",
+            "hint": "留空则使用全局配置；部分 ComfyUI 部署无需鉴权",
+            "type": "string",
+            "default": ""
+          },
+          "workflow_content": {
+            "description": "工作流内容（API 格式 JSON）",
+            "hint": "必须是从 ComfyUI 点击“导出（API 格式）”得到的完整 JSON，不要使用普通导出格式",
+            "type": "text",
+            "default": ""
+          },
+          "workflow_variable_bindings": {
+            "description": "节点绑定列表",
+            "hint": "用「节点ID + 字段路径」精确定位并覆盖 workflow_content 中的对应值；字段路径使用点号，如 inputs.text 或 inputs.texts.0",
+            "type": "template_list",
+            "templates": {
+              "binding": {
+                "name": "节点绑定",
+                "display_item": "node_id",
+                "items": {
+                  "node_id": {
+                    "description": "节点 ID",
+                    "hint": "对应 workflow_content 中该节点的 Key",
+                    "type": "string",
+                    "default": ""
+                  },
+                  "field_path": {
+                    "description": "字段路径",
+                    "hint": "点路径，例如 inputs.text 或 inputs.texts.0",
+                    "type": "string",
+                    "default": "inputs.text"
+                  },
+                  "binding_type": {
+                    "description": "绑定类型",
+                    "type": "string",
+                    "default": "prompt_positive",
+                    "options": [
+                      "prompt_positive",
+                      "prompt_negative",
+                      "image_input",
+                      "seed",
+                      "custom_text",
+                      "custom_number"
+                    ],
+                    "labels": [
+                      "正向提示词",
+                      "反向提示词",
+                      "图片输入",
+                      "随机种子",
+                      "自定义文本",
+                      "自定义数值"
+                    ]
+                  },
+                  "custom_value": {
+                    "description": "自定义值",
+                    "hint": "反向提示词、自定义文本请填写文本；随机种子留空则每次随机；自定义数值请填写数字（含小数点则按浮点数处理）",
+                    "type": "string",
+                    "default": ""
+                  }
+                }
+              }
+            }
+          },
+          "send_strategy": {
+            "description": "发送链路",
+            "hint": "跟随全局表示使用最底部的「全局发送链路」配置；也可为该工作流单独指定",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "workflow_runtime_default": {
+    "description": "ComfyUI 运行环境（全局默认）",
+    "hint": "供未在工作流条目中单独覆盖运行环境的条目使用",
+    "type": "object",
+    "items": {
+      "base_url": {
+        "description": "ComfyUI 地址",
+        "hint": "例如 http://127.0.0.1:8188",
+        "type": "string",
+        "default": "http://127.0.0.1:8188"
+      },
+      "api_key": {
+        "description": "鉴权 Token",
+        "hint": "部分 ComfyUI 部署无需鉴权，可留空",
+        "type": "string",
+        "default": ""
+      },
+      "poll_interval_seconds": {
+        "description": "轮询间隔（秒）",
+        "hint": "查询任务状态的时间间隔",
+        "type": "float",
+        "default": 1.0
+      },
+      "timeout_seconds": {
+        "description": "任务超时时间（秒）",
+        "type": "int",
+        "default": 180
       }
     }
   },
@@ -308,5 +525,25 @@
         }
       }
     }
+  },
+  "send_strategy": {
+    "description": "全局发送链路",
+    "hint": "注意：当生图成功但发送图片失败时，可尝试更改此项；该配置极少需要调整，默认「直连优先」已能覆盖绝大多数场景",
+    "type": "string",
+    "default": "direct_first",
+    "options": [
+      "direct_first",
+      "event_send_first",
+      "context_send_first",
+      "platform_client_first",
+      "result_pipeline_only"
+    ],
+    "labels": [
+      "直连优先（默认）",
+      "事件发送优先",
+      "上下文发送优先",
+      "平台客户端优先",
+      "仅结果管道"
+    ]
   }
 }

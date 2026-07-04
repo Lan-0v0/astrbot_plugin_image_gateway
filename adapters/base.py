@@ -55,10 +55,16 @@ class ModelConfig:
     enabled: bool = True
     retry_count: int = -1
     max_generation_count: int = -1
+    send_strategy: str = "follow_global"
+    kind: str = "model"
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_template_entry(cls, entry: dict[str, Any]) -> ModelConfig:
+        # Imported lazily to avoid a hard import-time dependency from the
+        # adapters package onto the services package.
+        from ..services.send_strategy import parse_entry_send_strategy
+
         template = str(
             entry.get("__template_key")
             or entry.get("_template")
@@ -80,6 +86,7 @@ class ModelConfig:
             enabled=bool(entry.get("enabled", True)),
             retry_count=int(entry.get("retry_count", -1)),
             max_generation_count=int(entry.get("max_generation_count", -1)),
+            send_strategy=parse_entry_send_strategy(entry.get("send_strategy")),
             raw=entry,
         )
 

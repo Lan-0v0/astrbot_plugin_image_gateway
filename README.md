@@ -5,12 +5,14 @@ AstrBot 多模型图像生成网关插件。统一接入 OpenAI Images API 与 G
 ## 功能特性
 
 - **多模型网关**：可同时配置多个 OpenAI / Gemini 模型，按优先级依次尝试
+- **工作流（Workflow）支持**：可配置 ComfyUI 文生图工作流，与模型统一参与优先级调度
 - **文生图 / 改图**：支持 `/生图` 与 `/改图` 指令
 - **自然语言触发**：开启后 LLM 可通过函数工具 `image_gateway_generate` 触发生图（指令始终优先）
-- **智能回退**：当前模型失败或达上限时，自动尝试下一优先级模型
-- **可配置重试**：全局与单模型均可设置重试次数，失败时指数退避等待
+- **智能回退**：当前模型/工作流失败或达上限时，自动尝试下一优先级目标
+- **可配置重试**：全局与单模型/单工作流均可设置重试次数，失败时指数退避等待
 - **张数上限控制**：可限制单次请求的最大生成张数，避免一次请求生成过多图片
 - **审核力度可调**：OpenAI / Gemini 均支持将审核设为 `none`，并自动尝试多种降级策略
+- **可配置发送链路**：全局与单条目均可指定消息发送优先方式，降低复杂插件环境下的干扰
 - **灵活发送**：若 AstrBot 配置了 `callback_api_base`，优先以 URL 发送图片；失败时回退本地文件
 
 ## 环境要求
@@ -77,6 +79,72 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `quality` / `size` | 画质与尺寸（默认画质为 `high`，部分网关可能忽略） |
 | `moderation` | 内容审核 / 安全过滤等级（见下文） |
 | `seed` | 随机种子，留空表示随机（部分模型不支持） |
+| `send_strategy` | 该模型的发送链路，默认 `follow_global`（见下文「发送链路」） |
+
+### 工作流（Workflow）列表（`workflows`）
+
+在「图像生成模型列表」和「生图开始提示」之间新增了「工作流（Workflow）列表」，用于接入 ComfyUI 文生图工作流。工作流条目与模型条目**统一参与同一套优先级调度**：按 `priority` 降序与模型混合排列，一起做重试与回退。
+
+> **当前版本范围**：工作流仅支持**文生图**（ComfyUI），暂不支持改图；`/改图` 请求会自动跳过工作流条目，仅使用已配置的模型。
+
+每个工作流条目字段：
+
+| 字段 | 说明 |
+|------|------|
+| `display_name` | 显示名称 |
+| `enabled` | 是否启用 |
+| `priority` | 优先级，与模型列表共用同一套顺序 |
+| `retry_count` | 重试次数，`-1` 表示使用全局默认 |
+| `max_generation_count` | 单次请求最大生成张数，`-1` 表示使用全局默认 |
+| `workflow_type` | 工作流类型，当前仅支持 `comfyui` |
+| `runtime_base_url_override` | 覆盖 ComfyUI 地址；留空则使用全局默认 |
+| `runtime_api_key_override` | 覆盖 ComfyUI 鉴权 Token；留空则使用全局默认 |
+| `workflow_content` | **必须**是从 ComfyUI 点击“导出（API 格式）”得到的完整 JSON |
+| `workflow_variable_bindings` | 节点绑定列表（见下文） |
+| `send_strategy` | 该工作流的发送链路，默认 `follow_global` |
+
+#### 节点绑定（`workflow_variable_bindings`）
+
+每条绑定通过 **“节点 ID + 字段路径”** 精确定位 `workflow_content` 中的某个字段，并用配置值覆盖该字段原有内容；最终合并后的 workflow 才会被提交执行。
+
+| 字段 | 说明 |
+|------|------|
+| `node_id` | 对应 `workflow_content` 中该节点的 Key（例如 ComfyUI 导出 JSON 里的 `"6"`） |
+| `field_path` | 点路径，例如 `inputs.text` 或 `inputs.texts.0`（支持列表下标） |
+| `binding_type` | 绑定类型（见下表） |
+| `custom_value` | 部分绑定类型需要填写的自定义值 |
+
+`binding_type` 支持：
+
+| 类型 | 说明 |
+|------|------|
+| `prompt_positive` | 使用当前 `/生图` 提示词覆盖该字段 |
+| `prompt_negative` | 使用 `custom_value` 填写的反向提示词覆盖该字段 |
+| `image_input` | 使用输入图片覆盖该字段（当前版本文生图请求下会跳过，不生效） |
+| `seed` | 使用 `custom_value` 中的整数作为种子；留空则每次随机生成 |
+| `custom_text` | 使用 `custom_value` 中的文本覆盖该字段 |
+| `custom_number` | 使用 `custom_value` 中的数字覆盖该字段；含小数点按浮点数处理，否则按整数处理，**不会**被转换为字符串 |
+
+**示例**：将节点 `6` 的 `inputs.text` 绑定为正向提示词：
+
+```json
+{
+  "node_id": "6",
+  "field_path": "inputs.text",
+  "binding_type": "prompt_positive"
+}
+```
+
+### ComfyUI 运行环境（全局默认，`workflow_runtime_default`）
+
+供未在工作流条目中单独覆盖运行环境的条目使用：
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `base_url` | ComfyUI 地址 | `http://127.0.0.1:8188` |
+| `api_key` | 鉴权 Token，部分部署无需鉴权可留空 | `''` |
+| `poll_interval_seconds` | 查询任务状态的轮询间隔（秒） | `1.0` |
+| `timeout_seconds` | 任务超时时间（秒） | `180` |
 
 ### 生图开始提示（`generation_start_message`）
 
@@ -112,11 +180,30 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 
 ### 多模型与回退逻辑
 
-1. 筛选已启用模型，按 `priority` 降序排列  
-2. 对每个模型：检查本次请求张数是否超出 `max_generation_count`  
-3. 未超限时按 `retry_count` 重试（间隔约 2^n 秒，上限 10 秒）  
-4. 当前模型全部失败后，自动尝试下一优先级模型  
-5. 所有模型均失败时，返回最后一次错误摘要；仅当所有候选模型都因额度上限被跳过时，才统一返回「超出生成张数上限」
+1. 筛选已启用的模型与工作流条目，按 `priority` 降序统一排列  
+2. 对每个目标：检查本次请求张数是否超出 `max_generation_count`  
+3. 若为工作流条目且当前是改图请求，直接跳过该目标  
+4. 未超限时按 `retry_count` 重试（间隔约 2^n 秒，上限 10 秒）  
+5. 当前目标全部失败后，自动尝试下一优先级目标  
+6. 所有目标均失败时，返回最后一次错误摘要；仅当所有候选目标都因额度上限被跳过时，才统一返回「超出生成张数上限」
+
+### 发送链路（`send_strategy`）
+
+用于控制生成结果（成功文本、开始提示、图片）的发送优先方式，位于配置面板**最底部**，即「生图开始提示」下方。该配置**极少需要调整**，默认的「直连优先」已能覆盖绝大多数场景。
+
+> **注意**：当生图/改图成功、但发送图片失败时，可尝试更改此项。
+
+可选值：
+
+| 值 | 说明 |
+|------|------|
+| `direct_first` | 默认。优先直接发送（`event.send` → `context.send_message` → 平台客户端），仅在都失败时才回退到结果管道 |
+| `event_send_first` | 只尝试 `event.send` |
+| `context_send_first` | 只尝试 `context.send_message` |
+| `platform_client_first` | 只尝试平台客户端直接调用 |
+| `result_pipeline_only` | 不做任何主动发送，直接走 AstrBot 结果管道（等价于回退到早期版本行为） |
+
+每个模型 / 工作流条目都可以单独设置 `send_strategy`；默认值为 `follow_global`，表示跟随本节的全局配置。
 
 ## 使用说明
 
@@ -185,18 +272,26 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 - `max_generation_count` 控制的是**单次请求张数上限**，不是历史累计总量  
 - 改图仅使用第一张输入图；如需多图参考，请自行在提示词中描述或等待后续版本支持  
 - 生成耗时受上游 API 影响，单次请求超时约 180 秒  
+- 工作流 `workflow_content` 必须是 ComfyUI 的 **API 格式导出**，普通工作流导出格式无法直接使用  
+- 工作流当前版本仅支持文生图，`image_input` 绑定类型在文生图请求下会被跳过  
 
 ## 项目结构
 
 ```
 astrbot_plugin_image_gateway/
-├── main.py              # 插件入口与指令注册
+├── main.py              # 插件入口、指令注册与消息发送链路
 ├── metadata.yaml        # 插件元数据
 ├── _conf_schema.json    # WebUI 配置 schema
 ├── requirements.txt     # Python 依赖
+├── CHANGELOG.md         # 版本更新日志
 ├── adapters/            # OpenAI / Gemini 适配器
-├── services/            # 生成调度与计数
-└── utils/               # 消息解析与图片存储
+├── services/            # 生成调度、发送策略、Workflow 配置与执行
+│   ├── generation.py        # 统一调度模型与工作流条目
+│   ├── send_strategy.py      # 发送链路枚举与解析
+│   ├── workflow_config.py    # Workflow / 节点绑定配置模型
+│   ├── workflow_merge.py     # node_id + field_path 覆盖逻辑
+│   └── workflow_runner.py    # ComfyUI 提交与轮询执行器
+└── utils/               # 消息解析、图片存储、点路径工具
 ```
 
 ## 许可证

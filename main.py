@@ -16,6 +16,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from .adapters import GenerationError
 from .services.counter import GenerationCounter
 from .services.generation import GenerationService
+from .services.send_strategy import SendStrategy, get_sender_order, parse_global_send_strategy
 from .utils.messages import collect_input_images, parse_command_text, parse_count_and_prompt
 
 PLUGIN_NAME = "astrbot_plugin_image_gateway"
@@ -49,8 +50,8 @@ class StartMessageDispatchResult:
 @register(
     PLUGIN_NAME,
     "AstrBot",
-    "多模型图像生成网关，支持 OpenAI/Gemini、优先级回退与自然语言触发",
-    "1.1.4",
+    "多模型图像生成网关，支持 OpenAI/Gemini/ComfyUI Workflow、优先级回退与自然语言触发",
+    "1.2.0",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -69,6 +70,7 @@ class ImageGatewayPlugin(Star):
             GenerationCounter(counter_file),
         )
         self.enable_nl_trigger = bool(self.plugin_config.get("enable_nl_trigger", True))
+        self.global_send_strategy = parse_global_send_strategy(self.plugin_config.get("send_strategy"))
         self.start_message_config = self._load_start_message_config(
             self.plugin_config.get("generation_start_message")
         )
@@ -127,13 +129,20 @@ class ImageGatewayPlugin(Star):
 
         return normalized_values or list(fallback)
 
-    async def _send_generated_images(self, event: AstrMessageEvent, image_paths: list[str]):
+    async def _send_generated_images(
+        self,
+        event: AstrMessageEvent,
+        image_paths: list[str],
+        *,
+        send_strategy: SendStrategy = SendStrategy.DIRECT_FIRST,
+    ):
         if not image_paths:
             return
 
+        sender_order = get_sender_order(send_strategy)
         merged_chain, single_image_chains = await self._build_image_delivery_chains(event, image_paths)
 
-        if merged_chain and await self._send_message_chain_directly(event, merged_chain):
+        if merged_chain and await self._send_message_chain_directly(event, merged_chain, sender_order=sender_order):
             return
 
         if len(single_image_chains) == 1:
@@ -141,7 +150,7 @@ class ImageGatewayPlugin(Star):
             return
 
         for single_image_chain in single_image_chains:
-            if await self._send_message_chain_directly(event, single_image_chain):
+            if await self._send_message_chain_directly(event, single_image_chain, sender_order=sender_order):
                 continue
             yield event.chain_result(single_image_chain)
 
@@ -186,36 +195,148 @@ class ImageGatewayPlugin(Star):
         self,
         event: AstrMessageEvent,
         chain_components: list[Any],
+        *,
+        sender_order: list[str] | None = None,
     ) -> bool:
-        message_chain = MessageChain(chain_components)
+        resolved_sender_order = (
+            sender_order if sender_order is not None else ["event_send", "context_send_message"]
+        )
 
-        event_send_method = getattr(event, "send", None)
-        if callable(event_send_method):
-            try:
-                await event_send_method(message_chain)
-                logger.debug("图片消息已通过 event.send 直接发送")
+        for sender_name in resolved_sender_order:
+            if sender_name == "event_send" and await self._try_send_via_event_send(event, chain_components):
                 return True
-            except Exception as exc:
-                logger.warning(f"event.send 发送图片失败，尝试下一层回退: {exc}")
-
-        context_send_method = getattr(self.context, "send_message", None)
-        message_origin = getattr(event, "unified_msg_origin", None)
-        if callable(context_send_method) and message_origin:
-            try:
-                await context_send_method(message_origin, message_chain)
-                logger.debug("图片消息已通过 context.send_message 直接发送")
+            if sender_name == "context_send_message" and await self._try_send_via_context_send_message(
+                event, chain_components
+            ):
                 return True
-            except Exception as exc:
-                logger.warning(f"context.send_message 发送图片失败，回退结果管道: {exc}")
+            if sender_name == "platform_client" and await self._try_send_via_platform_client_chain(
+                event, chain_components
+            ):
+                return True
 
         return False
+
+    async def _try_send_via_event_send(
+        self,
+        event: AstrMessageEvent,
+        chain_components: list[Any],
+    ) -> bool:
+        message_chain = MessageChain(chain_components)
+        event_send_method = getattr(event, "send", None)
+        if not callable(event_send_method):
+            return False
+
+        try:
+            await event_send_method(message_chain)
+            logger.debug("消息已通过 event.send 直接发送")
+            return True
+        except Exception as exc:
+            logger.warning(f"event.send 发送失败，尝试下一层回退: {exc}")
+            return False
+
+    async def _try_send_via_context_send_message(
+        self,
+        event: AstrMessageEvent,
+        chain_components: list[Any],
+    ) -> bool:
+        message_chain = MessageChain(chain_components)
+        context_send_method = getattr(self.context, "send_message", None)
+        message_origin = getattr(event, "unified_msg_origin", None)
+        if not callable(context_send_method) or not message_origin:
+            return False
+
+        try:
+            await context_send_method(message_origin, message_chain)
+            logger.debug("消息已通过 context.send_message 直接发送")
+            return True
+        except Exception as exc:
+            logger.warning(f"context.send_message 发送失败，回退结果管道: {exc}")
+            return False
+
+    async def _try_send_via_platform_client_chain(
+        self,
+        event: AstrMessageEvent,
+        chain_components: list[Any],
+    ) -> bool:
+        get_platform_inst = getattr(self.context, "get_platform_inst", None)
+        if not callable(get_platform_inst):
+            return False
+
+        platform = get_platform_inst(event.get_platform_id())
+        if platform is None:
+            return False
+
+        try:
+            client = platform.get_client()
+        except Exception as exc:
+            logger.warning(f"获取平台客户端失败，无法通过客户端直接发送: {exc}")
+            return False
+
+        if client is None or not hasattr(client, "call_action"):
+            return False
+
+        segments: list[dict[str, Any]] = []
+        for component in chain_components:
+            segment = await self._build_platform_message_segment(component)
+            if segment is None:
+                logger.debug("消息片段不支持平台客户端发送，放弃该链路")
+                return False
+            segments.append(segment)
+
+        session_id = event.get_group_id() or event.get_sender_id()
+        if not session_id or not str(session_id).isdigit():
+            return False
+
+        try:
+            if event.get_group_id():
+                await client.call_action(
+                    "send_group_msg",
+                    group_id=int(session_id),
+                    message=segments,
+                )
+            else:
+                await client.call_action(
+                    "send_private_msg",
+                    user_id=int(session_id),
+                    message=segments,
+                )
+            logger.debug("消息已通过平台客户端直接发送")
+            return True
+        except Exception as exc:
+            logger.warning(f"平台客户端直接发送失败: {exc}")
+            return False
+
+    async def _build_platform_message_segment(self, component: Any) -> dict[str, Any] | None:
+        if isinstance(component, Comp.Plain):
+            return {"type": "text", "data": {"text": str(getattr(component, "text", ""))}}
+
+        if isinstance(component, Image):
+            try:
+                base64_payload = await component.convert_to_base64()
+            except Exception as exc:
+                logger.warning(f"图片转换为 base64 失败，平台客户端无法发送: {exc}")
+                return None
+            raw_base64 = (
+                base64_payload.split(",", 1)[-1]
+                if base64_payload.startswith("data:image")
+                else base64_payload
+            )
+            return {"type": "image", "data": {"file": f"base64://{raw_base64}"}}
+
+        return None
 
     async def _send_plain_text_directly(
         self,
         event: AstrMessageEvent,
         text: str,
+        *,
+        sender_order: list[str] | None = None,
     ) -> bool:
-        success, _message_id = await self._send_plain_text_directly_with_message_id(event, text)
+        success, _message_id = await self._send_plain_text_directly_with_message_id(
+            event,
+            text,
+            sender_order=sender_order,
+        )
         return success
 
     async def _send_plain_text_directly_with_message_id(
@@ -223,26 +344,26 @@ class ImageGatewayPlugin(Star):
         event: AstrMessageEvent,
         text: str,
         *,
-        prefer_platform_client: bool = False,
+        sender_order: list[str] | None = None,
     ) -> tuple[bool, str | None]:
-        if prefer_platform_client:
-            platform_send_success, platform_message_id = await self._send_plain_text_via_platform_client(
-                event,
-                text,
-            )
-            if platform_send_success:
-                return True, platform_message_id
+        resolved_sender_order = (
+            sender_order
+            if sender_order is not None
+            else ["event_send", "context_send_message", "platform_client"]
+        )
 
-        if await self._send_message_chain_directly(event, [Comp.Plain(text)]):
-            return True, None
+        for sender_name in resolved_sender_order:
+            if sender_name == "platform_client":
+                platform_send_success, platform_message_id = await self._send_plain_text_via_platform_client(
+                    event,
+                    text,
+                )
+                if platform_send_success:
+                    return True, platform_message_id
+                continue
 
-        if not prefer_platform_client:
-            platform_send_success, platform_message_id = await self._send_plain_text_via_platform_client(
-                event,
-                text,
-            )
-            if platform_send_success:
-                return True, platform_message_id
+            if await self._send_message_chain_directly(event, [Comp.Plain(text)], sender_order=[sender_name]):
+                return True, None
 
         return False, None
 
@@ -322,10 +443,11 @@ class ImageGatewayPlugin(Star):
 
         start_message = await self._send_start_message(event, success_label)
         if start_message.sent_passively:
+            start_message_sender_order = get_sender_order(self.global_send_strategy, for_start_message=True)
             fallback_send_success, fallback_message_id = await self._send_plain_text_directly_with_message_id(
                 event,
                 start_message.text,
-                prefer_platform_client=True,
+                sender_order=start_message_sender_order,
             )
             start_message.message_id = start_message.message_id or fallback_message_id
             if not fallback_send_success:
@@ -334,7 +456,7 @@ class ImageGatewayPlugin(Star):
         started = time.time()
 
         try:
-            paths, _model_name = await self.generation_service.generate(
+            paths, _model_name, effective_send_strategy = await self.generation_service.generate(
                 mode=mode,
                 prompt=prompt,
                 count=count,
@@ -352,9 +474,11 @@ class ImageGatewayPlugin(Star):
 
         elapsed = time.time() - started
         success_message_text = f"{success_label}成功，用时{elapsed:.1f}秒"
+        success_message_sender_order = get_sender_order(effective_send_strategy)
         success_message_sent_directly = await self._send_plain_text_directly(
             event,
             success_message_text,
+            sender_order=success_message_sender_order,
         )
         await self._retract_start_message(event, start_message.message_id)
 
@@ -362,7 +486,11 @@ class ImageGatewayPlugin(Star):
             yield event.plain_result(success_message_text)
             return
 
-        async for result in self._send_generated_images(event, [str(path) for path in paths]):
+        async for result in self._send_generated_images(
+            event,
+            [str(path) for path in paths],
+            send_strategy=effective_send_strategy,
+        ):
             yield result
 
     async def _send_start_message(

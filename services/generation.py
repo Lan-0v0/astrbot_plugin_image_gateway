@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Union
 
 import aiohttp
 
@@ -10,44 +10,74 @@ from astrbot.api import logger
 
 from ..adapters import GenerationError, ModelConfig, SensitiveContentError, get_adapter
 from .counter import GenerationCounter
+from .send_strategy import (
+    DEFAULT_GLOBAL_SEND_STRATEGY,
+    SendStrategy,
+    parse_global_send_strategy,
+    resolve_effective_send_strategy,
+)
+from .workflow_config import WorkflowConfig, WorkflowRuntimeConfig
+from .workflow_runner import ComfyUIWorkflowRunner
 
 Mode = Literal["text_to_image", "image_to_image"]
 
+GenerationTarget = Union[ModelConfig, WorkflowConfig]
+
 
 class GenerationService:
+    """Schedules image generation across OpenAI/Gemini models and Workflow entries.
+
+    Both kinds of entries share the same scheduling attributes (``enabled``,
+    ``priority``, ``retry_count``, ``max_generation_count``, ``send_strategy``)
+    and are tried together in a single priority-ordered list.
+    """
+
     def __init__(
         self,
-        models: list[ModelConfig],
+        targets: list[GenerationTarget],
         *,
         global_retry_count: int,
         global_max_generation_count: int,
         output_dir: Path,
         counter: GenerationCounter,
+        global_send_strategy: SendStrategy = DEFAULT_GLOBAL_SEND_STRATEGY,
+        workflow_runtime_default: WorkflowRuntimeConfig | None = None,
     ):
-        self.models = models
+        self.targets = targets
         self.global_retry_count = max(1, global_retry_count)
         self.global_max_generation_count = global_max_generation_count
         self.output_dir = output_dir
         self.counter = counter
+        self.global_send_strategy = global_send_strategy
+        self.workflow_runtime_default = workflow_runtime_default or WorkflowRuntimeConfig()
+        self._workflow_runner = ComfyUIWorkflowRunner()
 
     @classmethod
     def from_config(cls, config: dict, output_dir: Path, counter: GenerationCounter) -> GenerationService:
         raw_models = config.get("models") or []
-        models: list[ModelConfig] = []
+        targets: list[GenerationTarget] = []
         if isinstance(raw_models, list):
             for entry in raw_models:
                 if isinstance(entry, dict):
-                    models.append(ModelConfig.from_template_entry(entry))
+                    targets.append(ModelConfig.from_template_entry(entry))
 
-        enabled_models = [m for m in models if m.enabled]
-        enabled_models.sort(key=lambda item: item.priority, reverse=True)
+        raw_workflows = config.get("workflows") or []
+        if isinstance(raw_workflows, list):
+            for entry in raw_workflows:
+                if isinstance(entry, dict):
+                    targets.append(WorkflowConfig.from_template_entry(entry))
+
+        enabled_targets = [target for target in targets if target.enabled]
+        enabled_targets.sort(key=lambda item: item.priority, reverse=True)
 
         return cls(
-            enabled_models,
+            enabled_targets,
             global_retry_count=int(config.get("global_retry_count", 2) or 2),
             global_max_generation_count=int(config.get("global_max_generation_count", 2) or 2),
             output_dir=output_dir,
             counter=counter,
+            global_send_strategy=parse_global_send_strategy(config.get("send_strategy")),
+            workflow_runtime_default=WorkflowRuntimeConfig.from_raw(config.get("workflow_runtime_default")),
         )
 
     async def generate(
@@ -57,61 +87,71 @@ class GenerationService:
         prompt: str,
         count: int = 1,
         input_images: list[str] | None = None,
-    ) -> tuple[list[Path], str]:
+    ) -> tuple[list[Path], str, SendStrategy]:
         requested_count = self._normalize_requested_count(mode, count)
         self.validate_request_count(requested_count)
 
         errors: list[str] = []
         had_sensitive = False
-        quota_exhausted_model_count = 0
+        quota_exhausted_target_count = 0
+        mode_unsupported_target_count = 0
         timeout = aiohttp.ClientTimeout(total=180)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            for model in self.models:
-                if self._request_count_exceeds_limit(model, requested_count):
-                    quota_exhausted_model_count += 1
-                    errors.append(f"{model.display_name}: 超出生成张数上限")
+            for target in self.targets:
+                if target.kind == "workflow" and mode == "image_to_image":
+                    # 第一版工作流仅支持文生图，改图请求直接跳过该目标。
+                    mode_unsupported_target_count += 1
+                    errors.append(f"{target.display_name}: 当前版本工作流暂不支持改图")
                     continue
 
-                retry_count = self._resolve_retry_count(model)
-                adapter = get_adapter(model.provider)
+                if self._request_count_exceeds_limit(target, requested_count):
+                    quota_exhausted_target_count += 1
+                    errors.append(f"{target.display_name}: 超出生成张数上限")
+                    continue
+
+                retry_count = self._resolve_retry_count(target)
 
                 for attempt in range(retry_count):
                     try:
                         if attempt > 0:
                             delay = min(2**attempt, 10)
                             logger.info(
-                                f"[{model.display_name}] 第 {attempt + 1}/{retry_count} 次重试，等待 {delay}s"
+                                f"[{target.display_name}] 第 {attempt + 1}/{retry_count} 次重试，等待 {delay}s"
                             )
                             await asyncio.sleep(delay)
 
-                        if mode == "text_to_image":
-                            paths = await adapter.text_to_image(
-                                prompt, requested_count, model, self.output_dir, session
-                            )
-                        else:
-                            paths = await adapter.image_to_image(
-                                prompt, input_images or [], model, self.output_dir, session
-                            )
+                        paths = await self._invoke_target(
+                            target,
+                            mode=mode,
+                            prompt=prompt,
+                            requested_count=requested_count,
+                            input_images=input_images,
+                            session=session,
+                        )
 
                         if paths:
-                            await self.counter.add_count(model.model_key(), len(paths))
-                            return paths, model.display_name
+                            await self.counter.add_count(target.model_key(), len(paths))
+                            effective_send_strategy = resolve_effective_send_strategy(
+                                global_strategy=self.global_send_strategy,
+                                entry_strategy=target.send_strategy,
+                            )
+                            return paths, target.display_name, effective_send_strategy
                     except SensitiveContentError as exc:
-                        # 安全审查失败不重试本模型（相同内容结果不变），
-                        # 记录后继续尝试下一个优先级模型；全部失败再统一上报。
+                        # 安全审查失败不重试本目标（相同内容结果不变），
+                        # 记录后继续尝试下一个优先级目标；全部失败再统一上报。
                         had_sensitive = True
-                        msg = f"{model.display_name}: {exc}"
+                        msg = f"{target.display_name}: {exc}"
                         logger.warning(msg)
                         errors.append(msg)
                         break
                     except GenerationError as exc:
-                        msg = f"{model.display_name}: {exc}"
+                        msg = f"{target.display_name}: {exc}"
                         logger.warning(msg)
                         if attempt == retry_count - 1:
                             errors.append(msg)
                     except Exception as exc:
-                        msg = f"{model.display_name}: {exc}"
+                        msg = f"{target.display_name}: {exc}"
                         logger.error(msg)
                         if attempt == retry_count - 1:
                             errors.append(msg)
@@ -119,19 +159,48 @@ class GenerationService:
         if had_sensitive:
             raise SensitiveContentError(mode)
 
-        if quota_exhausted_model_count == len(self.models):
+        if self.targets and quota_exhausted_target_count == len(self.targets):
             raise GenerationError("超出生成张数上限")
+
+        if self.targets and mode_unsupported_target_count == len(self.targets):
+            raise GenerationError("已启用的工作流暂不支持改图，请配置支持改图的模型")
 
         brief = errors[-1] if errors else "所有模型均生成失败"
         if len(brief) > 120:
             brief = brief[:117] + "..."
         raise GenerationError(brief)
 
+    async def _invoke_target(
+        self,
+        target: GenerationTarget,
+        *,
+        mode: Mode,
+        prompt: str,
+        requested_count: int,
+        input_images: list[str] | None,
+        session: aiohttp.ClientSession,
+    ) -> list[Path]:
+        if isinstance(target, WorkflowConfig):
+            runtime_config = target.resolve_runtime_config(self.workflow_runtime_default)
+            return await self._workflow_runner.generate_text_to_image(
+                prompt,
+                requested_count,
+                target,
+                runtime_config,
+                self.output_dir,
+                session,
+            )
+
+        adapter = get_adapter(target.provider)
+        if mode == "text_to_image":
+            return await adapter.text_to_image(prompt, requested_count, target, self.output_dir, session)
+        return await adapter.image_to_image(prompt, input_images or [], target, self.output_dir, session)
+
     def validate_request_count(self, requested_count: int) -> None:
-        if not self.models:
+        if not self.targets:
             raise GenerationError("未配置任何已启用的图像模型")
 
-        if any(not self._request_count_exceeds_limit(model, requested_count) for model in self.models):
+        if any(not self._request_count_exceeds_limit(target, requested_count) for target in self.targets):
             return
 
         raise GenerationError("超出生成张数上限")
@@ -142,16 +211,16 @@ class GenerationService:
             return 1
         return max(1, count)
 
-    def _request_count_exceeds_limit(self, model: ModelConfig, requested_count: int) -> bool:
-        limit = self._resolve_max_count(model)
+    def _request_count_exceeds_limit(self, target: GenerationTarget, requested_count: int) -> bool:
+        limit = self._resolve_max_count(target)
         return limit >= 0 and requested_count > limit
 
-    def _resolve_retry_count(self, model: ModelConfig) -> int:
-        if model.retry_count and model.retry_count > 0:
-            return model.retry_count
+    def _resolve_retry_count(self, target: GenerationTarget) -> int:
+        if target.retry_count and target.retry_count > 0:
+            return target.retry_count
         return self.global_retry_count
 
-    def _resolve_max_count(self, model: ModelConfig) -> int:
-        if model.max_generation_count is not None and model.max_generation_count >= 0:
-            return model.max_generation_count
+    def _resolve_max_count(self, target: GenerationTarget) -> int:
+        if target.max_generation_count is not None and target.max_generation_count >= 0:
+            return target.max_generation_count
         return self.global_max_generation_count

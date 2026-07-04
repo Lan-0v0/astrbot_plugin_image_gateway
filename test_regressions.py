@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 
@@ -139,6 +141,21 @@ from astrbot_plugin_image_gateway.main import (  # noqa: E402
     StartMessageDispatchResult,
 )
 from astrbot_plugin_image_gateway.services.generation import GenerationService  # noqa: E402
+from astrbot_plugin_image_gateway.services.send_strategy import (  # noqa: E402
+    FOLLOW_GLOBAL,
+    SendStrategy,
+    get_sender_order,
+    parse_entry_send_strategy,
+    parse_global_send_strategy,
+    resolve_effective_send_strategy,
+)
+from astrbot_plugin_image_gateway.services.workflow_config import (  # noqa: E402
+    WorkflowConfig,
+    WorkflowNodeBinding,
+    WorkflowRuntimeConfig,
+)
+from astrbot_plugin_image_gateway.services.workflow_merge import merge_workflow_payload  # noqa: E402
+from astrbot_plugin_image_gateway.utils.json_path import get_by_dot_path, set_by_dot_path  # noqa: E402
 from astrbot_plugin_image_gateway.utils.messages import parse_command_text  # noqa: E402
 
 
@@ -319,7 +336,9 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
                 FakeClientSession,
             ),
         ):
-            paths, model_name = await service.generate(mode="image_to_image", prompt="test prompt")
+            paths, model_name, _effective_send_strategy = await service.generate(
+                mode="image_to_image", prompt="test prompt"
+            )
 
         self.assertEqual(model_name, "Primary")
         self.assertEqual(paths, [Path("generated.png")])
@@ -346,10 +365,21 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
         self.assertEqual(model_config.quality, "high")
 
+    def test_model_config_send_strategy_defaults_to_follow_global(self) -> None:
+        model_config = ModelConfig.from_template_entry({"provider": "openai"})
+        self.assertEqual(model_config.send_strategy, "follow_global")
+
+    def test_model_config_send_strategy_parses_explicit_value(self) -> None:
+        model_config = ModelConfig.from_template_entry(
+            {"provider": "openai", "send_strategy": "event_send_first"}
+        )
+        self.assertEqual(model_config.send_strategy, "event_send_first")
+
     def test_generation_service_from_config_uses_new_global_defaults(self) -> None:
         generation_service = GenerationService.from_config({}, Path("."), FakeCounter())
         self.assertEqual(generation_service.global_retry_count, 2)
         self.assertEqual(generation_service.global_max_generation_count, 2)
+        self.assertEqual(generation_service.global_send_strategy, SendStrategy.DIRECT_FIRST)
 
     def test_load_start_message_config_uses_default_custom_persona_prompt(self) -> None:
         plugin_instance = object.__new__(ImageGatewayPlugin)
@@ -489,6 +519,7 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
         plugin_instance = object.__new__(ImageGatewayPlugin)
         plugin_instance._refresh_services = lambda: None
         plugin_instance.context = types.SimpleNamespace(get_config=lambda: {})
+        plugin_instance.global_send_strategy = SendStrategy.DIRECT_FIRST
         plugin_instance.generation_service = types.SimpleNamespace(
             _normalize_requested_count=lambda mode, count: 1,
             validate_request_count=lambda requested_count: None,
@@ -541,6 +572,7 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
             get_config=lambda: {},
             get_platform_inst=lambda platform_id: FakePlatform(start_message_client),
         )
+        plugin_instance.global_send_strategy = SendStrategy.DIRECT_FIRST
         plugin_instance.generation_service = types.SimpleNamespace(
             _normalize_requested_count=lambda mode, count: 1,
             validate_request_count=lambda requested_count: None,
@@ -593,7 +625,7 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _build_generate_result(paths: list[Path]):
         async def generate(**kwargs):
-            return paths, "Test Model"
+            return paths, "Test Model", SendStrategy.DIRECT_FIRST
 
         return generate
 
@@ -613,6 +645,379 @@ class ModerationOptionRegressionTests(unittest.TestCase):
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
             ]],
         )
+
+
+class JsonPathRegressionTests(unittest.TestCase):
+    def test_get_by_dot_path_reads_nested_dict_value(self) -> None:
+        data = {"inputs": {"text": "hello"}}
+        self.assertEqual(get_by_dot_path(data, "inputs.text"), "hello")
+
+    def test_get_by_dot_path_reads_list_index(self) -> None:
+        data = {"inputs": {"texts": ["first", "second"]}}
+        self.assertEqual(get_by_dot_path(data, "inputs.texts.0"), "first")
+        self.assertEqual(get_by_dot_path(data, "inputs.texts.1"), "second")
+
+    def test_set_by_dot_path_overwrites_nested_dict_value(self) -> None:
+        data = {"inputs": {"text": "original"}}
+        set_by_dot_path(data, "inputs.text", "overwritten")
+        self.assertEqual(data["inputs"]["text"], "overwritten")
+
+    def test_set_by_dot_path_overwrites_list_index(self) -> None:
+        data = {"inputs": {"texts": ["first", "second"]}}
+        set_by_dot_path(data, "inputs.texts.1", "replaced")
+        self.assertEqual(data["inputs"]["texts"], ["first", "replaced"])
+
+    def test_set_by_dot_path_raises_key_error_for_missing_field(self) -> None:
+        data = {"inputs": {}}
+        with self.assertRaises(KeyError):
+            get_by_dot_path(data, "inputs.missing")
+
+    def test_set_by_dot_path_raises_index_error_for_out_of_range_index(self) -> None:
+        data = {"inputs": {"texts": ["only"]}}
+        with self.assertRaises(IndexError):
+            set_by_dot_path(data, "inputs.texts.5", "value")
+
+
+class SendStrategyRegressionTests(unittest.TestCase):
+    def test_parse_global_send_strategy_defaults_to_direct_first(self) -> None:
+        self.assertEqual(parse_global_send_strategy(None), SendStrategy.DIRECT_FIRST)
+        self.assertEqual(parse_global_send_strategy(""), SendStrategy.DIRECT_FIRST)
+        self.assertEqual(parse_global_send_strategy("not-a-real-strategy"), SendStrategy.DIRECT_FIRST)
+
+    def test_parse_global_send_strategy_parses_explicit_value(self) -> None:
+        self.assertEqual(
+            parse_global_send_strategy("platform_client_first"),
+            SendStrategy.PLATFORM_CLIENT_FIRST,
+        )
+
+    def test_parse_entry_send_strategy_defaults_to_follow_global(self) -> None:
+        self.assertEqual(parse_entry_send_strategy(None), FOLLOW_GLOBAL)
+        self.assertEqual(parse_entry_send_strategy(""), FOLLOW_GLOBAL)
+        self.assertEqual(parse_entry_send_strategy("not-a-real-strategy"), FOLLOW_GLOBAL)
+
+    def test_parse_entry_send_strategy_parses_explicit_value(self) -> None:
+        self.assertEqual(parse_entry_send_strategy("event_send_first"), "event_send_first")
+
+    def test_resolve_effective_send_strategy_follows_global_when_entry_unset(self) -> None:
+        effective_strategy = resolve_effective_send_strategy(
+            global_strategy=SendStrategy.PLATFORM_CLIENT_FIRST,
+            entry_strategy=FOLLOW_GLOBAL,
+        )
+        self.assertEqual(effective_strategy, SendStrategy.PLATFORM_CLIENT_FIRST)
+
+    def test_resolve_effective_send_strategy_overrides_global_when_entry_set(self) -> None:
+        effective_strategy = resolve_effective_send_strategy(
+            global_strategy=SendStrategy.DIRECT_FIRST,
+            entry_strategy="result_pipeline_only",
+        )
+        self.assertEqual(effective_strategy, SendStrategy.RESULT_PIPELINE_ONLY)
+
+    def test_get_sender_order_direct_first_prefers_platform_client_for_start_message(self) -> None:
+        delivery_order = get_sender_order(SendStrategy.DIRECT_FIRST, for_start_message=False)
+        start_message_order = get_sender_order(SendStrategy.DIRECT_FIRST, for_start_message=True)
+
+        self.assertEqual(delivery_order[0], "event_send")
+        self.assertEqual(start_message_order[0], "platform_client")
+
+    def test_get_sender_order_result_pipeline_only_returns_empty_list(self) -> None:
+        self.assertEqual(get_sender_order(SendStrategy.RESULT_PIPELINE_ONLY), [])
+
+
+class WorkflowConfigRegressionTests(unittest.TestCase):
+    def test_workflow_node_binding_from_template_entry_falls_back_to_custom_text(self) -> None:
+        node_binding = WorkflowNodeBinding.from_template_entry(
+            {"node_id": "6", "field_path": "inputs.text", "binding_type": "not-a-real-type"}
+        )
+        self.assertEqual(node_binding.binding_type, "custom_text")
+
+    def test_from_template_entry_parses_bindings_and_defaults(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "display_name": "我的 ComfyUI 工作流",
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+                "workflow_variable_bindings": [
+                    {
+                        "node_id": "6",
+                        "field_path": "inputs.text",
+                        "binding_type": "prompt_positive",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(workflow_config.workflow_type, "comfyui")
+        self.assertEqual(workflow_config.kind, "workflow")
+        self.assertEqual(workflow_config.send_strategy, FOLLOW_GLOBAL)
+        self.assertEqual(len(workflow_config.node_bindings), 1)
+        self.assertEqual(workflow_config.node_bindings[0].binding_type, "prompt_positive")
+
+    def test_from_template_entry_falls_back_to_comfyui_for_unknown_workflow_type(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry({"workflow_type": "unknown-engine"})
+        self.assertEqual(workflow_config.workflow_type, "comfyui")
+
+    def test_parsed_workflow_content_raises_generation_error_on_invalid_json(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {"display_name": "坏 JSON", "workflow_content": "{not valid json"}
+        )
+        with self.assertRaises(GenerationError):
+            workflow_config.parsed_workflow_content()
+
+    def test_resolve_runtime_config_uses_default_when_no_override(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry({"display_name": "无覆盖工作流"})
+        default_runtime = WorkflowRuntimeConfig(base_url="http://default:8188", api_key="default-key")
+
+        resolved_runtime = workflow_config.resolve_runtime_config(default_runtime)
+
+        self.assertEqual(resolved_runtime.base_url, "http://default:8188")
+        self.assertEqual(resolved_runtime.api_key, "default-key")
+
+    def test_resolve_runtime_config_applies_entry_overrides(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "display_name": "覆盖工作流",
+                "runtime_base_url_override": "http://override:8188",
+                "runtime_api_key_override": "override-key",
+            }
+        )
+        default_runtime = WorkflowRuntimeConfig(base_url="http://default:8188", api_key="default-key")
+
+        resolved_runtime = workflow_config.resolve_runtime_config(default_runtime)
+
+        self.assertEqual(resolved_runtime.base_url, "http://override:8188")
+        self.assertEqual(resolved_runtime.api_key, "override-key")
+
+
+class WorkflowMergeRegressionTests(unittest.TestCase):
+    def build_workflow_config(
+        self,
+        workflow_payload: dict[str, Any],
+        node_bindings: list[dict[str, Any]],
+    ) -> WorkflowConfig:
+        return WorkflowConfig.from_template_entry(
+            {
+                "display_name": "测试工作流",
+                "workflow_content": json.dumps(workflow_payload),
+                "workflow_variable_bindings": node_bindings,
+            }
+        )
+
+    def test_merge_overwrites_positive_prompt_via_node_id_and_field_path(self) -> None:
+        workflow_config = self.build_workflow_config(
+            {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "placeholder", "clip": ["4", 1]}}},
+            [{"node_id": "6", "field_path": "inputs.text", "binding_type": "prompt_positive"}],
+        )
+
+        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="一只猫在草地上奔跑")
+
+        self.assertEqual(merged_payload["6"]["inputs"]["text"], "一只猫在草地上奔跑")
+        self.assertEqual(merged_payload["6"]["inputs"]["clip"], ["4", 1])
+
+    def test_merge_overwrites_list_index_field_path(self) -> None:
+        workflow_config = self.build_workflow_config(
+            {"9": {"inputs": {"texts": ["old-a", "old-b"]}}},
+            [{"node_id": "9", "field_path": "inputs.texts.1", "binding_type": "custom_text", "custom_value": "new-b"}],
+        )
+
+        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="unused")
+
+        self.assertEqual(merged_payload["9"]["inputs"]["texts"], ["old-a", "new-b"])
+
+    def test_merge_custom_number_keeps_numeric_type_not_string(self) -> None:
+        workflow_config = self.build_workflow_config(
+            {"3": {"inputs": {"cfg": 7.0, "steps": 20}}},
+            [
+                {"node_id": "3", "field_path": "inputs.cfg", "binding_type": "custom_number", "custom_value": "4.5"},
+                {"node_id": "3", "field_path": "inputs.steps", "binding_type": "custom_number", "custom_value": "30"},
+            ],
+        )
+
+        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="unused")
+
+        self.assertEqual(merged_payload["3"]["inputs"]["cfg"], 4.5)
+        self.assertIsInstance(merged_payload["3"]["inputs"]["cfg"], float)
+        self.assertEqual(merged_payload["3"]["inputs"]["steps"], 30)
+        self.assertIsInstance(merged_payload["3"]["inputs"]["steps"], int)
+
+    def test_merge_random_seed_when_custom_value_is_empty(self) -> None:
+        workflow_config = self.build_workflow_config(
+            {"3": {"inputs": {"seed": 0}}},
+            [{"node_id": "3", "field_path": "inputs.seed", "binding_type": "seed", "custom_value": ""}],
+        )
+
+        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="unused")
+
+        self.assertIsInstance(merged_payload["3"]["inputs"]["seed"], int)
+
+    def test_merge_raises_generation_error_for_missing_node(self) -> None:
+        workflow_config = self.build_workflow_config(
+            {"6": {"inputs": {"text": "placeholder"}}},
+            [{"node_id": "999", "field_path": "inputs.text", "binding_type": "prompt_positive"}],
+        )
+
+        with self.assertRaises(GenerationError):
+            merge_workflow_payload(workflow_config, positive_prompt="不会用到")
+
+    def test_merge_raises_generation_error_for_invalid_field_path(self) -> None:
+        workflow_config = self.build_workflow_config(
+            {"6": {"inputs": {"text": "placeholder"}}},
+            [{"node_id": "6", "field_path": "inputs.missing_field", "binding_type": "prompt_positive"}],
+        )
+
+        with self.assertRaises(GenerationError):
+            merge_workflow_payload(workflow_config, positive_prompt="不会用到")
+
+    def test_merge_skips_image_input_binding_when_no_images_provided(self) -> None:
+        workflow_config = self.build_workflow_config(
+            {"10": {"inputs": {"image": "placeholder.png"}}},
+            [{"node_id": "10", "field_path": "inputs.image", "binding_type": "image_input"}],
+        )
+
+        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="unused", input_images=None)
+
+        self.assertEqual(merged_payload["10"]["inputs"]["image"], "placeholder.png")
+
+
+class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
+    def build_workflow(self, display_name: str, *, priority: int = 0) -> WorkflowConfig:
+        return WorkflowConfig.from_template_entry(
+            {
+                "display_name": display_name,
+                "priority": priority,
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+                "workflow_variable_bindings": [
+                    {"node_id": "6", "field_path": "inputs.text", "binding_type": "prompt_positive"}
+                ],
+            }
+        )
+
+    def build_model(self, display_name: str, *, priority: int = 0) -> ModelConfig:
+        return ModelConfig(
+            provider="openai",
+            display_name=display_name,
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name="test-model",
+            priority=priority,
+        )
+
+    async def test_workflow_and_model_targets_are_scheduled_by_priority(self) -> None:
+        low_priority_model = self.build_model("LowPriorityModel", priority=1)
+        high_priority_workflow = self.build_workflow("HighPriorityWorkflow", priority=10)
+        counter = FakeCounter()
+        service = GenerationService(
+            [high_priority_workflow, low_priority_model],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        async def fake_generate_text_to_image(self, prompt, count, workflow_config, runtime_config, output_dir, session):
+            return [Path("workflow_generated.png")]
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.ComfyUIWorkflowRunner.generate_text_to_image",
+                fake_generate_text_to_image,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, target_name, _effective_send_strategy = await service.generate(
+                mode="text_to_image", prompt="测试"
+            )
+
+        self.assertEqual(target_name, "HighPriorityWorkflow")
+        self.assertEqual(paths, [Path("workflow_generated.png")])
+
+    async def test_workflow_target_is_skipped_for_image_to_image_requests(self) -> None:
+        workflow_only = self.build_workflow("OnlyWorkflow", priority=10)
+        counter = FakeCounter()
+        service = GenerationService(
+            [workflow_only],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+            FakeClientSession,
+        ):
+            with self.assertRaises(GenerationError) as raised_error:
+                await service.generate(mode="image_to_image", prompt="测试", input_images=["stub-image"])
+
+        self.assertIn("暂不支持改图", str(raised_error.exception))
+
+    async def test_workflow_falls_back_to_next_model_on_failure(self) -> None:
+        failing_workflow = self.build_workflow("FailingWorkflow", priority=10)
+        fallback_model = self.build_model("FallbackModel", priority=1)
+        counter = FakeCounter()
+        service = GenerationService(
+            [failing_workflow, fallback_model],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        async def fake_generate_text_to_image(self, prompt, count, workflow_config, runtime_config, output_dir, session):
+            raise GenerationError("ComfyUI 连接失败")
+
+        successful_adapter = types.SimpleNamespace(
+            text_to_image=self._return_generated_path,
+            image_to_image=self._return_generated_path,
+        )
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.ComfyUIWorkflowRunner.generate_text_to_image",
+                fake_generate_text_to_image,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=successful_adapter,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, target_name, _effective_send_strategy = await service.generate(
+                mode="text_to_image", prompt="测试"
+            )
+
+        self.assertEqual(target_name, "FallbackModel")
+        self.assertEqual(paths, [Path("fallback_generated.png")])
+
+    async def _return_generated_path(self, *args, **kwargs):
+        return [Path("fallback_generated.png")]
+
+    async def test_from_config_reads_workflows_alongside_models(self) -> None:
+        config = {
+            "models": [
+                {
+                    "provider": "openai",
+                    "display_name": "TestModel",
+                    "priority": 1,
+                }
+            ],
+            "workflows": [
+                {
+                    "display_name": "TestWorkflow",
+                    "priority": 10,
+                    "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+                }
+            ],
+        }
+        service = GenerationService.from_config(config, Path("."), FakeCounter())
+
+        self.assertEqual(len(service.targets), 2)
+        self.assertEqual(service.targets[0].display_name, "TestWorkflow")
+        self.assertEqual(service.targets[1].display_name, "TestModel")
 
 
 if __name__ == "__main__":
