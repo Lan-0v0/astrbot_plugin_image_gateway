@@ -31,6 +31,7 @@ LLM_START_MESSAGE_PROMPT_TEMPLATE = (
 
 @dataclass(slots=True)
 class GenerationStartMessageConfig:
+    enabled: bool = True
     mode: str = "fixed"
     fixed_messages: list[str] = field(default_factory=lambda: ["开始生成"])
     llm_provider_id: str = ""
@@ -49,7 +50,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini、优先级回退与自然语言触发",
-    "1.1.3",
+    "1.1.4",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -78,6 +79,8 @@ class ImageGatewayPlugin(Star):
     ) -> GenerationStartMessageConfig:
         config_dict = raw_config if isinstance(raw_config, dict) else {}
 
+        enabled = bool(config_dict.get("enabled", True))
+
         mode = str(config_dict.get("mode") or "fixed").strip().lower()
         if mode not in {"fixed", "llm"}:
             mode = "fixed"
@@ -98,6 +101,7 @@ class ImageGatewayPlugin(Star):
         ).strip()
 
         return GenerationStartMessageConfig(
+            enabled=enabled,
             mode=mode,
             fixed_messages=fixed_messages,
             llm_provider_id=llm_provider_id,
@@ -211,44 +215,79 @@ class ImageGatewayPlugin(Star):
         event: AstrMessageEvent,
         text: str,
     ) -> bool:
+        success, _message_id = await self._send_plain_text_directly_with_message_id(event, text)
+        return success
+
+    async def _send_plain_text_directly_with_message_id(
+        self,
+        event: AstrMessageEvent,
+        text: str,
+        *,
+        prefer_platform_client: bool = False,
+    ) -> tuple[bool, str | None]:
+        if prefer_platform_client:
+            platform_send_success, platform_message_id = await self._send_plain_text_via_platform_client(
+                event,
+                text,
+            )
+            if platform_send_success:
+                return True, platform_message_id
+
         if await self._send_message_chain_directly(event, [Comp.Plain(text)]):
-            return True
+            return True, None
+
+        if not prefer_platform_client:
+            platform_send_success, platform_message_id = await self._send_plain_text_via_platform_client(
+                event,
+                text,
+            )
+            if platform_send_success:
+                return True, platform_message_id
+
+        return False, None
+
+    async def _send_plain_text_via_platform_client(
+        self,
+        event: AstrMessageEvent,
+        text: str,
+    ) -> tuple[bool, str | None]:
 
         platform = self.context.get_platform_inst(event.get_platform_id())
         if platform is None:
-            return False
+            return False, None
 
         try:
             client = platform.get_client()
         except Exception as exc:
             logger.warning(f"获取平台客户端失败，文本主动发送不可用: {exc}")
-            return False
+            return False, None
 
         if client is None or not hasattr(client, "call_action"):
-            return False
+            return False, None
 
         session_id = event.get_group_id() or event.get_sender_id()
         if not session_id or not str(session_id).isdigit():
-            return False
+            return False, None
 
         try:
             if event.get_group_id():
-                await client.call_action(
+                response = await client.call_action(
                     "send_group_msg",
                     group_id=int(session_id),
                     message=text,
                 )
             else:
-                await client.call_action(
+                response = await client.call_action(
                     "send_private_msg",
                     user_id=int(session_id),
                     message=text,
                 )
+            message_id = self._extract_message_id(response)
             logger.debug("文本消息已通过平台客户端直接发送")
-            return True
+            return True, message_id
         except Exception as exc:
             logger.warning(f"平台客户端直接发送文本失败，回退结果管道: {exc}")
-            return False
+            return False, None
 
     async def _build_image_component(self, image_path: str) -> Image:
         callback_api_base = self.context.get_config().get("callback_api_base")
@@ -283,7 +322,13 @@ class ImageGatewayPlugin(Star):
 
         start_message = await self._send_start_message(event, success_label)
         if start_message.sent_passively:
-            if not await self._send_plain_text_directly(event, start_message.text):
+            fallback_send_success, fallback_message_id = await self._send_plain_text_directly_with_message_id(
+                event,
+                start_message.text,
+                prefer_platform_client=True,
+            )
+            start_message.message_id = start_message.message_id or fallback_message_id
+            if not fallback_send_success:
                 yield event.plain_result(start_message.text)
 
         started = time.time()
@@ -325,6 +370,9 @@ class ImageGatewayPlugin(Star):
         event: AstrMessageEvent,
         label: str,
     ) -> StartMessageDispatchResult:
+        if not self.start_message_config.enabled:
+            return StartMessageDispatchResult(text="")
+
         message_text = await self._build_generation_start_message(event, label)
         platform = self.context.get_platform_inst(event.get_platform_id())
         if platform is None:
@@ -398,6 +446,9 @@ class ImageGatewayPlugin(Star):
         event: AstrMessageEvent,
         label: str,
     ) -> str:
+        if not self.start_message_config.enabled:
+            return ""
+
         if self.start_message_config.mode == "llm":
             llm_message = await self._generate_llm_start_message(event, label)
             if llm_message:

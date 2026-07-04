@@ -134,6 +134,7 @@ from astrbot_plugin_image_gateway.adapters.gemini import GeminiAdapter  # noqa: 
 from astrbot_plugin_image_gateway.adapters.openai import OpenAIAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.main import (  # noqa: E402
     DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
+    GenerationStartMessageConfig,
     ImageGatewayPlugin,
     StartMessageDispatchResult,
 )
@@ -167,15 +168,60 @@ class FakeClientSession:
 
 
 class FakeEvent:
-    def __init__(self, message_text: str):
+    def __init__(
+        self,
+        message_text: str,
+        *,
+        group_id: str = "123456",
+        sender_id: str = "654321",
+        platform_id: str = "test-platform",
+        platform_name: str = "aiocqhttp",
+    ):
         self.message_str = message_text
         self.unified_msg_origin = "test-origin"
+        self._group_id = group_id
+        self._sender_id = sender_id
+        self._platform_id = platform_id
+        self._platform_name = platform_name
 
     def plain_result(self, text: str):
         return text
 
     def chain_result(self, chain):
         return chain
+
+    def get_group_id(self):
+        return self._group_id
+
+    def get_sender_id(self):
+        return self._sender_id
+
+    def get_platform_id(self):
+        return self._platform_id
+
+    def get_platform_name(self):
+        return self._platform_name
+
+
+class FakePlatformClient:
+    def __init__(self, responses: dict[str, Any] | None = None):
+        self.responses = dict(responses or {})
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def call_action(self, action: str, **kwargs):
+        self.calls.append((action, kwargs))
+        response = self.responses.get(action)
+        if callable(response):
+            return response(**kwargs)
+        return response
+
+
+class FakePlatform:
+    def __init__(self, client: FakePlatformClient):
+        self._client = client
+
+    def get_client(self):
+        return self._client
 
 
 class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -315,6 +361,14 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
             DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
         )
 
+    def test_load_start_message_config_supports_enabled_switch(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        enabled_config = plugin_instance._load_start_message_config({})
+        disabled_config = plugin_instance._load_start_message_config({"enabled": False})
+
+        self.assertEqual(enabled_config.enabled, True)
+        self.assertEqual(disabled_config.enabled, False)
+
 
 class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_quota_error_is_returned_before_start_message(self) -> None:
@@ -342,6 +396,14 @@ class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
             results.append(result)
 
         self.assertEqual(results, ["超出生成张数上限"])
+
+    async def test_build_generation_start_message_returns_empty_when_disabled(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.start_message_config = GenerationStartMessageConfig(enabled=False)
+
+        message_text = await plugin_instance._build_generation_start_message(FakeEvent("/生图 测试"), "生图")
+
+        self.assertEqual(message_text, "")
 
 
 class ImageDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -467,9 +529,66 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.sent_messages[0][0].text.startswith("改图成功，用时"), True)
         self.assertEqual(event.sent_messages[1], ["image:generated.png"])
 
+    async def test_run_generation_retracts_passively_sent_start_message_with_platform_message_id(self) -> None:
+        start_message_client = FakePlatformClient(
+            responses={
+                "send_group_msg": {"data": {"message_id": 24680}},
+            }
+        )
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance._refresh_services = lambda: None
+        plugin_instance.context = types.SimpleNamespace(
+            get_config=lambda: {},
+            get_platform_inst=lambda platform_id: FakePlatform(start_message_client),
+        )
+        plugin_instance.generation_service = types.SimpleNamespace(
+            _normalize_requested_count=lambda mode, count: 1,
+            validate_request_count=lambda requested_count: None,
+            generate=self._build_generate_result([Path("generated.png")]),
+        )
+
+        async def build_image_component(image_path: str):
+            return f"image:{image_path}"
+
+        retract_calls: list[str | None] = []
+
+        async def retract_start_message(event, message_id):
+            retract_calls.append(message_id)
+
+        plugin_instance._build_image_component = build_image_component
+        plugin_instance._send_start_message = self._build_passive_start_message_result
+        plugin_instance._retract_start_message = retract_start_message
+
+        event = FakeEvent("/改图 测试")
+        event.sent_messages = []
+
+        async def send(message_chain):
+            event.sent_messages.append(list(message_chain))
+
+        event.send = send
+
+        results = []
+        async for result in plugin_instance._run_generation(
+            event,
+            mode="image_to_image",
+            prompt="测试",
+            count=1,
+            input_images=["stub-image"],
+            success_label="改图",
+        ):
+            results.append(result)
+
+        self.assertEqual(results, [])
+        self.assertEqual(retract_calls, ["24680"])
+        self.assertEqual(event.sent_messages[-1], ["image:generated.png"])
+
     @staticmethod
     async def _build_start_message_result(event, label):
         return StartMessageDispatchResult(text="开始生成", message_id="1", sent_passively=False)
+
+    @staticmethod
+    async def _build_passive_start_message_result(event, label):
+        return StartMessageDispatchResult(text="开始生成", sent_passively=True)
 
     @staticmethod
     def _build_generate_result(paths: list[Path]):

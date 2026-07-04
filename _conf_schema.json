@@ -232,9 +232,14 @@
   },
   "generation_start_message": {
     "description": "生图开始提示",
-    "hint": "控制开始生成前发送的提示语；支持固定语句随机发送或 LLM 生成",
+    "hint": "控制开始生成前是否发送提示语；开启后支持固定语句随机发送或 LLM 生成",
     "type": "object",
     "items": {
+      "enabled": {
+        "description": "启用生图开始提示",
+        "type": "bool",
+        "default": true
+      },
       "mode": {
         "description": "提示语模式",
         "type": "string",
@@ -246,7 +251,10 @@
         "labels": [
           "固定语句",
           "LLM"
-        ]
+        ],
+        "condition": {
+          "enabled": true
+        }
       },
       "fixed_messages": {
         "description": "固定语句列表",
@@ -256,6 +264,7 @@
           "开始生成"
         ],
         "condition": {
+          "enabled": true,
           "mode": "fixed"
         }
       },
@@ -266,6 +275,7 @@
         "default": "",
         "_special": "select_provider",
         "condition": {
+          "enabled": true,
           "mode": "llm"
         }
       },
@@ -282,6 +292,7 @@
           "自定义人设提示词"
         ],
         "condition": {
+          "enabled": true,
           "mode": "llm"
         }
       },
@@ -291,6 +302,7 @@
         "default": "根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式不使用emoji，10字以内。",
         "hint": "仅在选择自定义人设提示词时生效",
         "condition": {
+          "enabled": true,
           "mode": "llm",
           "llm_persona_source": "custom"
         }
