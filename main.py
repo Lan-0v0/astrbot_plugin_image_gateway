@@ -19,6 +19,9 @@ from .utils.messages import collect_input_images, parse_command_text, parse_coun
 
 PLUGIN_NAME = "astrbot_plugin_image_gateway"
 DEFAULT_START_MESSAGES = ["开始生成"]
+DEFAULT_LLM_CUSTOM_PERSONA_PROMPT = (
+    "根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式不使用emoji，10字以内。"
+)
 LLM_START_MESSAGE_PROMPT_TEMPLATE = (
     "请用简短自然的中文，向用户发送一句{label}开始前的提示。"
     "只输出一句话，不要换行，不要解释，不要表情，不要引号，长度尽量控制在12个字以内。"
@@ -31,7 +34,7 @@ class GenerationStartMessageConfig:
     fixed_messages: list[str] = field(default_factory=lambda: ["开始生成"])
     llm_provider_id: str = ""
     llm_persona_source: str = "current"
-    llm_custom_persona_prompt: str = ""
+    llm_custom_persona_prompt: str = DEFAULT_LLM_CUSTOM_PERSONA_PROMPT
 
 
 @dataclass(slots=True)
@@ -45,7 +48,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini、优先级回退与自然语言触发",
-    "1.1.0",
+    "1.1.1",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -89,7 +92,9 @@ class ImageGatewayPlugin(Star):
         if llm_persona_source not in {"current", "custom"}:
             llm_persona_source = "current"
 
-        llm_custom_persona_prompt = str(config_dict.get("llm_custom_persona_prompt") or "").strip()
+        llm_custom_persona_prompt = str(
+            config_dict.get("llm_custom_persona_prompt") or DEFAULT_LLM_CUSTOM_PERSONA_PROMPT
+        ).strip()
 
         return GenerationStartMessageConfig(
             mode=mode,

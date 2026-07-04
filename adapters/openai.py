@@ -138,6 +138,8 @@ class OpenAIAdapter:
         level = (level or "auto").lower()
         if level == "none":
             return [None, "low", "auto"]
+        if level == "high":
+            return ["high"]
         if level == "low":
             return ["low"]
         return ["auto"]

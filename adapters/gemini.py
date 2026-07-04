@@ -162,6 +162,8 @@ class GeminiAdapter:
                 self._build_safety_settings("BLOCK_ONLY_HIGH"),
                 None,
             ]
+        if level == "high":
+            return [self._build_safety_settings("BLOCK_MEDIUM_AND_ABOVE")]
         if level == "low":
             return [self._build_safety_settings("BLOCK_ONLY_HIGH")]
         return [None]

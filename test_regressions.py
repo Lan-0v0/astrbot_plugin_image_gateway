@@ -21,6 +21,9 @@ def install_astrbot_test_stubs() -> None:
     astrbot_module = types.ModuleType("astrbot")
     astrbot_api_module = types.ModuleType("astrbot.api")
     astrbot_api_all_module = types.ModuleType("astrbot.api.all")
+    astrbot_api_event_module = types.ModuleType("astrbot.api.event")
+    astrbot_api_message_components_module = types.ModuleType("astrbot.api.message_components")
+    astrbot_api_star_module = types.ModuleType("astrbot.api.star")
     astrbot_core_module = types.ModuleType("astrbot.core")
     astrbot_core_message_module = types.ModuleType("astrbot.core.message")
     astrbot_core_message_components_module = types.ModuleType(
@@ -35,13 +38,57 @@ def install_astrbot_test_stubs() -> None:
         def __init__(self, chain=None):
             self.chain = chain or []
 
+    class DummyAstrBotConfig(dict):
+        pass
+
+    class DummyAstrMessageEvent:
+        pass
+
+    class DummyContext:
+        pass
+
+    class DummyStar:
+        def __init__(self, context=None):
+            self.context = context
+
+    class DummyStarTools:
+        @staticmethod
+        def get_data_dir(plugin_name: str) -> Path:
+            return Path(".")
+
+    def dummy_register(*args, **kwargs):
+        def decorator(cls):
+            return cls
+
+        return decorator
+
+    class DummyFilterProxy:
+        def __getattr__(self, name):
+            def decorator_factory(*args, **kwargs):
+                def decorator(target):
+                    return target
+
+                return decorator
+
+            return decorator_factory
+
     astrbot_api_module.logger = logger_stub
+    astrbot_api_module.AstrBotConfig = DummyAstrBotConfig
     astrbot_api_all_module.Image = DummyImage
+    astrbot_api_event_module.AstrMessageEvent = DummyAstrMessageEvent
+    astrbot_api_event_module.filter = DummyFilterProxy()
+    astrbot_api_star_module.Context = DummyContext
+    astrbot_api_star_module.Star = DummyStar
+    astrbot_api_star_module.StarTools = DummyStarTools
+    astrbot_api_star_module.register = dummy_register
     astrbot_core_message_components_module.Reply = DummyReply
 
     sys.modules["astrbot"] = astrbot_module
     sys.modules["astrbot.api"] = astrbot_api_module
     sys.modules["astrbot.api.all"] = astrbot_api_all_module
+    sys.modules["astrbot.api.event"] = astrbot_api_event_module
+    sys.modules["astrbot.api.message_components"] = astrbot_api_message_components_module
+    sys.modules["astrbot.api.star"] = astrbot_api_star_module
     sys.modules["astrbot.core"] = astrbot_core_module
     sys.modules["astrbot.core.message"] = astrbot_core_message_module
     sys.modules["astrbot.core.message.components"] = astrbot_core_message_components_module
@@ -53,6 +100,12 @@ repository_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(repository_root.parent))
 
 from astrbot_plugin_image_gateway.adapters.base import GenerationError, ModelConfig  # noqa: E402
+from astrbot_plugin_image_gateway.adapters.gemini import GeminiAdapter  # noqa: E402
+from astrbot_plugin_image_gateway.adapters.openai import OpenAIAdapter  # noqa: E402
+from astrbot_plugin_image_gateway.main import (  # noqa: E402
+    DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
+    ImageGatewayPlugin,
+)
 from astrbot_plugin_image_gateway.services.generation import GenerationService  # noqa: E402
 from astrbot_plugin_image_gateway.utils.messages import parse_command_text  # noqa: E402
 
@@ -168,6 +221,44 @@ class MessageParsingRegressionTests(unittest.TestCase):
     def test_parse_command_text_does_not_capture_unrelated_commands(self) -> None:
         event = FakeEvent("/别的命令 只是路过")
         self.assertEqual(parse_command_text(event, "改图"), "")
+
+
+class ConfigurationDefaultRegressionTests(unittest.TestCase):
+    def test_model_config_defaults_to_high_quality(self) -> None:
+        model_config = ModelConfig.from_template_entry({"provider": "openai"})
+        self.assertEqual(model_config.quality, "high")
+
+    def test_generation_service_from_config_uses_new_global_defaults(self) -> None:
+        generation_service = GenerationService.from_config({}, Path("."), FakeCounter())
+        self.assertEqual(generation_service.global_retry_count, 2)
+        self.assertEqual(generation_service.global_max_generation_count, 2)
+
+    def test_load_start_message_config_uses_default_custom_persona_prompt(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        start_message_config = plugin_instance._load_start_message_config(
+            {"mode": "llm", "llm_persona_source": "custom"}
+        )
+        self.assertEqual(
+            start_message_config.llm_custom_persona_prompt,
+            DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
+        )
+
+
+class ModerationOptionRegressionTests(unittest.TestCase):
+    def test_openai_high_moderation_maps_to_high(self) -> None:
+        self.assertEqual(OpenAIAdapter._moderation_attempts("high"), ["high"])
+
+    def test_gemini_high_moderation_maps_to_medium_and_above_blocking(self) -> None:
+        safety_attempts = GeminiAdapter()._safety_attempts("high")
+        self.assertEqual(
+            safety_attempts,
+            [[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            ]],
+        )
 
 
 if __name__ == "__main__":

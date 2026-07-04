@@ -44,8 +44,8 @@ class GenerationService:
 
         return cls(
             enabled_models,
-            global_retry_count=int(config.get("global_retry_count", 3) or 3),
-            global_max_generation_count=int(config.get("global_max_generation_count", -1) or -1),
+            global_retry_count=int(config.get("global_retry_count", 2) or 2),
+            global_max_generation_count=int(config.get("global_max_generation_count", 2) or 2),
             output_dir=output_dir,
             counter=counter,
         )

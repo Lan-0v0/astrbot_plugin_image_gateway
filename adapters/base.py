@@ -47,7 +47,7 @@ class ModelConfig:
     url: str
     apikey: str
     model_name: str
-    quality: str = "auto"
+    quality: str = "high"
     size: str = "1024x1024"
     moderation: str = "auto"
     seed: str = ""
@@ -72,7 +72,7 @@ class ModelConfig:
             url=str(entry.get("url") or "").strip(),
             apikey=str(entry.get("apikey") or "").strip(),
             model_name=str(entry.get("model_name") or "").strip(),
-            quality=str(entry.get("quality") or "auto"),
+            quality=str(entry.get("quality") or "high"),
             size=str(entry.get("size") or "1024x1024"),
             moderation=str(entry.get("moderation") or "auto"),
             seed=str(entry.get("seed") or "").strip(),

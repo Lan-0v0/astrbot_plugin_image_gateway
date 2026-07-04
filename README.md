@@ -55,8 +55,8 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `enable_nl_trigger` | 启用自然语言触发。关闭后 LLM 工具无法生图，仅 `/生图`、`/改图` 可用 | `true` |
-| `global_retry_count` | 全局默认重试次数。单模型未单独配置（`-1`）时使用 | `3` |
-| `global_max_generation_count` | 全局默认最大生成张数上限。`-1` 表示不限制 | `-1` |
+| `global_retry_count` | 全局默认重试次数。单模型未单独配置（`-1`）时使用 | `2` |
+| `global_max_generation_count` | 全局默认最大生成张数上限。`-1` 表示不限制 | `2` |
 
 ### 模型列表（`models`）
 
@@ -74,7 +74,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `model_name` | 模型 ID |
 | `retry_count` | 重试次数，`-1` 表示使用全局默认 |
 | `max_generation_count` | 该模型累计最大生成张数，`-1` 表示使用全局默认；超出后提示「超出生成张数上限」并尝试下一模型 |
-| `quality` / `size` | 画质与尺寸（部分网关可能忽略） |
+| `quality` / `size` | 画质与尺寸（默认画质为 `high`，部分网关可能忽略） |
 | `moderation` | 内容审核 / 安全过滤等级（见下文） |
 | `seed` | 随机种子，留空表示随机（部分模型不支持） |
 
@@ -93,17 +93,19 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `fixed_messages` | 固定语句列表。固定语句模式下随机发送 | `['开始生成']` |
 | `llm_provider_id` | LLM 提示语使用的提供商；留空则跟随当前默认配置 | `''` |
 | `llm_persona_source` | LLM 提示语使用的人设来源。`current` 为当前人设，`custom` 为自定义人设提示词 | `current` |
-| `llm_custom_persona_prompt` | 自定义人设提示词，仅在 `llm_persona_source=custom` 时生效 | `''` |
+| `llm_custom_persona_prompt` | 自定义人设提示词，仅在 `llm_persona_source=custom` 时生效 | `根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式不使用emoji，10字以内。` |
 
 ### 审核力度（`moderation`）
 
-**OpenAI** 可选：`none` / `low` / `auto`
+**OpenAI** 可选：`none` / `low` / `high` / `auto`
 
 - 设为 **`none`** 时，插件会依次尝试：不传 `moderation` 参数 → `low` → `auto`，以兼容不同网关对「关闭审核」的实现方式。
+- 设为 **`high`** 时，会以更严格的审核等级请求上游接口。
 
-**Gemini** 可选：`none` / `low` / `default`
+**Gemini** 可选：`none` / `low` / `high` / `default`
 
 - 设为 **`none`** 时，插件会依次尝试 `BLOCK_NONE`、`OFF`、`BLOCK_ONLY_HIGH` 等多种安全设置，失败后继续降级。
+- 设为 **`high`** 时，会使用 `BLOCK_MEDIUM_AND_ABOVE` 作为更严格的安全过滤等级。
 
 > 降低审核等级可能违反上游服务条款，请自行评估风险；部分网关仍可能强制过滤内容。
 
