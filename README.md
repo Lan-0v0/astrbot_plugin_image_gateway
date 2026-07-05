@@ -1,4 +1,4 @@
-<img width="1024" height="1024" alt="图像网关插件看板娘" src="https://github.com/user-attachments/assets/942500fc-1459-4d50-84be-8fdc0fc02b80" />
+<img width="128" height="128" alt="图像网关插件看板娘128x128" src="https://github.com/user-attachments/assets/e8a1077e-4548-4bd3-8b6e-1c6d782f3ff2" />
 # astrbot\_plugin\_image\_gateway
 
 AstrBot 多模型图像生成网关插件。支持 OpenAI Images API 与 Google Gemini 图像接口，支持Wrokflow工作流如ComfyUI，可自定义baseURL、模型名称、显示名称、优先级、重试次数及审核力度。支持文生图、图生图两种模式，支持自然语言。
