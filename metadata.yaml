@@ -1,8 +1,8 @@
 name: astrbot_plugin_image_gateway
 display_name: 图像网关
-desc: 优化 Workflow 配置面板 UI，增强节点条目提示与优先级体验
+desc: 优化配置面板条目命名与节点绑定提示，精简不必要输入框
 short_desc: OpenAI/Gemini/ComfyUI 多模型生图与改图网关
-version: 1.2.3
+version: 1.2.4
 author: AstrBot
 repo: "https://github.com/Lan-0v0/astrbot_plugin_image_gateway"
 astrbot_version: ">=4.9.2,<5"

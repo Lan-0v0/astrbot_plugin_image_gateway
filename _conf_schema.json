@@ -26,7 +26,7 @@
     "type": "template_list",
     "templates": {
       "openai": {
-        "name": "图像生成条目",
+        "name": "OpenAI",
         "hint": "OpenAI Images API 或兼容网关",
         "display_item": "display_name",
         "items": {
@@ -178,7 +178,7 @@
         }
       },
       "gemini": {
-        "name": "图像生成条目",
+        "name": "Gemini",
         "hint": "Google Gemini 图像生成或 Imagen 兼容接口",
         "display_item": "display_name",
         "items": {
@@ -496,6 +496,7 @@
           },
           "binding_type": {
             "description": "内容类型",
+            "hint": "正向提示词应通过 /生图 /改图 指令输入；图片输入为 /改图 指令专用，这两种类型都不需要在配置面板里额外填写输入框",
             "type": "string",
             "default": "prompt_positive",
             "options": [
@@ -549,24 +550,6 @@
             "default": "",
             "condition": {
               "binding_type": "custom_number"
-            }
-          },
-          "prompt_positive_help": {
-            "description": "正向提示词提示",
-            "hint": "此项应通过 /生图 /改图 指令输入",
-            "type": "string",
-            "default": "",
-            "condition": {
-              "binding_type": "prompt_positive"
-            }
-          },
-          "image_input_help": {
-            "description": "图像输入提示",
-            "hint": "此项为 /改图 指令的专用，用于图像的传输",
-            "type": "string",
-            "default": "",
-            "condition": {
-              "binding_type": "image_input"
             }
           }
         }

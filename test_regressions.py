@@ -727,6 +727,24 @@ class SendStrategyRegressionTests(unittest.TestCase):
 
 
 class WorkflowConfigRegressionTests(unittest.TestCase):
+    def test_conf_schema_uses_provider_names_for_model_templates(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(schema["models"]["templates"]["openai"]["name"], "OpenAI")
+        self.assertEqual(schema["models"]["templates"]["gemini"]["name"], "Gemini")
+
+    def test_conf_schema_moves_prompt_and_image_usage_help_into_binding_type_hint(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        binding_items = schema["workflow_node_bindings"]["templates"]["binding"]["items"]
+        binding_type = binding_items["binding_type"]
+
+        self.assertIn("正向提示词", binding_type["hint"])
+        self.assertIn("/生图 /改图", binding_type["hint"])
+        self.assertIn("图片输入", binding_type["hint"])
+        self.assertNotIn("prompt_positive_help", binding_items)
+        self.assertNotIn("image_input_help", binding_items)
+
     def test_workflow_node_binding_from_template_entry_falls_back_to_custom_text(self) -> None:
         node_binding = WorkflowNodeBinding.from_template_entry(
             {
