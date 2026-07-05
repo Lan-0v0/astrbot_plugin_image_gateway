@@ -1,3 +1,9 @@
+## v1.2.5
+
+- 补充优先级预设与分类型节点输入的回归测试，覆盖模型/工作流预设优先级、类型专属输入字段与旧版 `custom_value` 兼容逻辑
+- 同步校正文档中关于 `prompt_negative_value`、`custom_text_value`、`seed_value`、`custom_number_value` 的说明，使 README 与当前配置面板行为保持一致
+- 保持 v1.2.4 的内嵌式 Workflow 节点配置结构不变，在现有交互方案上继续做稳定性整理
+
 ## v1.2.4
 
 - 纠正此前误改的 Workflow 配置结构，恢复为“工作流条目内部维护自定义节点条目”的组织方式

@@ -127,11 +127,11 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | 类型 | 说明 |
 |------|------|
 | `prompt_positive` | 使用当前 `/生图` 提示词覆盖该字段 |
-| `prompt_negative` | 使用 `custom_value` 填写的反向提示词覆盖该字段 |
+| `prompt_negative` | 使用 `prompt_negative_value` 中填写的反向提示词覆盖该字段 |
 | `image_input` | 使用输入图片覆盖该字段（当前版本文生图请求下会跳过，不生效） |
-| `seed` | 使用 `custom_value` 中的整数作为种子；留空则每次随机生成 |
-| `custom_text` | 使用 `custom_value` 中的文本覆盖该字段 |
-| `custom_number` | 使用 `custom_value` 中的数字覆盖该字段；含小数点按浮点数处理，否则按整数处理，**不会**被转换为字符串 |
+| `seed` | 使用 `seed_value` 中的整数作为种子；留空则每次随机生成 |
+| `custom_text` | 使用 `custom_text_value` 中的文本覆盖该字段 |
+| `custom_number` | 使用 `custom_number_value` 中的数字覆盖该字段；含小数点按浮点数处理，否则按整数处理，**不会**被转换为字符串 |
 
 **示例**：将节点 `6` 的 `inputs.text` 绑定为正向提示词：
 

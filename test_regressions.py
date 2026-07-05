@@ -375,6 +375,18 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         )
         self.assertEqual(model_config.send_strategy, "event_send_first")
 
+    def test_model_config_priority_preset_uses_preset_weight(self) -> None:
+        model_config = ModelConfig.from_template_entry(
+            {"provider": "openai", "priority_preset": "highest", "priority": -999}
+        )
+        self.assertEqual(model_config.priority, 1000)
+
+    def test_model_config_custom_priority_still_uses_numeric_value(self) -> None:
+        model_config = ModelConfig.from_template_entry(
+            {"provider": "openai", "priority_preset": "custom", "priority": 23}
+        )
+        self.assertEqual(model_config.priority, 23)
+
     def test_generation_service_from_config_uses_new_global_defaults(self) -> None:
         generation_service = GenerationService.from_config({}, Path("."), FakeCounter())
         self.assertEqual(generation_service.global_retry_count, 2)
@@ -736,6 +748,42 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(node_binding.display_name, "正向提示词节点")
         self.assertEqual(node_binding.binding_type, "custom_text")
 
+    def test_workflow_node_binding_reads_type_specific_text_field(self) -> None:
+        node_binding = WorkflowNodeBinding.from_template_entry(
+            {
+                "display_name": "反向提示词节点",
+                "node_id": "6",
+                "field_path": "inputs.text",
+                "binding_type": "prompt_negative",
+                "prompt_negative_value": "bad anatomy",
+            }
+        )
+        self.assertEqual(node_binding.custom_value, "bad anatomy")
+
+    def test_workflow_node_binding_reads_type_specific_seed_field(self) -> None:
+        node_binding = WorkflowNodeBinding.from_template_entry(
+            {
+                "display_name": "随机种子节点",
+                "node_id": "3",
+                "field_path": "inputs.seed",
+                "binding_type": "seed",
+                "seed_value": "123456",
+            }
+        )
+        self.assertEqual(node_binding.custom_value, "123456")
+
+    def test_workflow_node_binding_falls_back_to_legacy_custom_value(self) -> None:
+        node_binding = WorkflowNodeBinding.from_template_entry(
+            {
+                "display_name": "CFG 参数节点",
+                "node_id": "9",
+                "field_path": "inputs.cfg",
+                "binding_type": "custom_number",
+                "custom_value": "7.5",
+            }
+        )
+        self.assertEqual(node_binding.custom_value, "7.5")
+
     def test_from_template_entry_parses_bindings_and_defaults(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
             {
@@ -758,6 +806,28 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(len(workflow_config.node_bindings), 1)
         self.assertEqual(workflow_config.node_bindings[0].display_name, "正向提示词节点")
         self.assertEqual(workflow_config.node_bindings[0].binding_type, "prompt_positive")
+
+    def test_workflow_config_priority_preset_uses_preset_weight(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "display_name": "我的 ComfyUI 工作流",
+                "priority_preset": "high",
+                "priority": -999,
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+            }
+        )
+        self.assertEqual(workflow_config.priority, 300)
+
+    def test_workflow_config_custom_priority_still_uses_numeric_value(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "display_name": "我的 ComfyUI 工作流",
+                "priority_preset": "custom",
+                "priority": 17,
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+            }
+        )
+        self.assertEqual(workflow_config.priority, 17)
 
     def test_from_template_entry_falls_back_to_comfyui_for_unknown_workflow_type(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry({"workflow_type": "unknown-engine"})
