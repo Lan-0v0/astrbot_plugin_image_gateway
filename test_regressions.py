@@ -736,6 +736,35 @@ class SendStrategyRegressionTests(unittest.TestCase):
 
 
 class WorkflowConfigRegressionTests(unittest.TestCase):
+    def test_conf_schema_uses_provider_names_for_model_templates(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(schema["models"]["templates"]["openai"]["name"], "OpenAI")
+        self.assertEqual(schema["models"]["templates"]["gemini"]["name"], "Gemini")
+
+    def test_conf_schema_binding_type_hint_covers_prompt_and_image_without_extra_fields(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        binding_items = (
+            schema["workflows"]["templates"]["comfyui"]["items"]["workflow_variable_bindings"]["templates"][
+                "binding"
+            ]["items"]
+        )
+        binding_type = binding_items["binding_type"]
+        conditioned_fields = {
+            key: value.get("condition", {}).get("binding_type")
+            for key, value in binding_items.items()
+            if isinstance(value, dict)
+        }
+
+        self.assertIn("正向提示词", binding_type["hint"])
+        self.assertIn("/生图 /改图", binding_type["hint"])
+        self.assertIn("图片输入", binding_type["hint"])
+        self.assertNotIn("prompt_positive_value", binding_items)
+        self.assertNotIn("image_input_value", binding_items)
+        self.assertNotIn("prompt_positive", conditioned_fields.values())
+        self.assertNotIn("image_input", conditioned_fields.values())
+
     def test_workflow_node_binding_from_template_entry_falls_back_to_custom_text(self) -> None:
         node_binding = WorkflowNodeBinding.from_template_entry(
             {
