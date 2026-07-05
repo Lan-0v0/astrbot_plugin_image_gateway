@@ -336,7 +336,7 @@
   },
   "workflows": {
     "description": "工作流（Workflow）列表",
-    "hint": "第一版仅支持 ComfyUI 文生图工作流；与图像生成模型列表统一参与调度，按优先级从高到低尝试",
+    "hint": "支持 ComfyUI 工作流；可按“仅文生图 / 文生图 + 改图 / 仅改图”参与统一优先级调度",
     "type": "template_list",
     "templates": {
       "comfyui": {
@@ -344,18 +344,6 @@
         "hint": "需要粘贴 ComfyUI 使用“导出（API 格式）”得到的完整工作流 JSON",
         "display_item": "display_name",
         "items": {
-          "workflow_type_label": {
-            "description": "类型",
-            "hint": "当前仅支持 ComfyUI",
-            "type": "string",
-            "default": "ComfyUI",
-            "options": [
-              "ComfyUI"
-            ],
-            "labels": [
-              "ComfyUI"
-            ]
-          },
           "workflow_id": {
             "description": "工作流 ID",
             "hint": "用于关联下方“工作流自定义节点条目”。建议使用稳定、唯一的英文或拼音标识，例如 portrait_flux",
@@ -416,7 +404,7 @@
             "default": -1
           },
           "workflow_type": {
-            "description": "工作流类型",
+            "description": "类型",
             "hint": "当前仅支持 ComfyUI",
             "type": "string",
             "default": "comfyui",

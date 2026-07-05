@@ -1,8 +1,8 @@
 name: astrbot_plugin_image_gateway
 display_name: 图像网关
-desc: 新增工作流支持模式三档选择，并优化 ComfyUI 配置面板与双入口文档说明
+desc: 修正工作流模式预校验与图片输入异常处理，清理冗余面板字段并完善文档说明
 short_desc: OpenAI/Gemini/ComfyUI 多模型生图与改图网关
-version: 1.3.0
+version: 1.3.1
 author: AstrBot
 repo: "https://github.com/Lan-0v0/astrbot_plugin_image_gateway"
 astrbot_version: ">=4.9.2,<5"

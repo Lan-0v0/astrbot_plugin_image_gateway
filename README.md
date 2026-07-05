@@ -174,9 +174,9 @@ AstrBot 多模型图像生成网关插件。统一接入 OpenAI Images API 与 G
 - `/生图` 时，`denoise=1.0`
 - `/改图` 时，`denoise=0.45`
 
-### 如果你直接使用本仓库里的示例 JSON
+### 如果你使用本地导出的示例 JSON
 
-仓库中的 `ComfyUI图生图+文生图.json` 已经按“单工作流双入口”的思路整理过，典型绑定如下：
+如果你手头有按“单工作流双入口”思路整理过的本地工作流 JSON，例如 `ComfyUI图生图+文生图.json`，典型绑定如下。请注意：这类工作流文件可能包含你的本地节点、模型路径、提示词模板或其它私有配置，**不要提交到公开仓库**。
 
 1. `85.inputs.text` -> `prompt_positive`
 2. `213.inputs.text` -> `prompt_positive`
@@ -301,7 +301,6 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 
 | 字段 | 说明 |
 |------|------|
-| `workflow_type_label` | 类型下拉项，当前仅支持 `ComfyUI` |
 | `display_name` | 显示名称 |
 | `enabled` | 是否启用 |
 | `priority_preset` | 优先级预设。推荐直接选择“最高 / 高 / 普通 / 低 / 最低” |
@@ -309,7 +308,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `retry_count` | 重试次数，`-1` 表示使用全局默认 |
 | `max_generation_count` | 单次请求最大生成张数，`-1` 表示使用全局默认 |
 | `workflow_id` | 工作流唯一标识，用于关联下方的工作流自定义节点条目 |
-| `workflow_type` | 工作流类型标识，当前仅支持 `comfyui` |
+| `workflow_type` | 类型下拉项，当前仅支持 `ComfyUI`；代码内部对应 `comfyui` |
 | `supported_modes` | 工作流支持的模式。可选“仅文生图”“文生图 + 改图”“仅改图”；默认仅 `text_to_image` |
 | `runtime_base_url_override` | 覆盖 ComfyUI 地址；留空则使用全局默认 |
 | `runtime_api_key_override` | 覆盖 ComfyUI 鉴权 Token；留空则使用全局默认 |
@@ -524,6 +523,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 - 生成耗时受上游 API 影响，单次请求超时约 180 秒  
 - 工作流 `workflow_content` 必须是 ComfyUI 的 **API 格式导出**，普通工作流导出格式无法直接使用  
 - 工作流可配置为仅文生图、文生图 + 改图、或仅改图；若要同时支持 `/改图`，请将 `supported_modes` 设为 `both` 并配置双入口绑定  
+- 本地导出的工作流 JSON 可能包含私有节点、模型路径、提示词或其它环境信息，建议只粘贴到配置面板使用，不要提交到公开仓库  
 
 ## 项目结构
 

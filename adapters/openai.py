@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import re
 from pathlib import Path
 from typing import Any
@@ -84,7 +85,10 @@ class OpenAIAdapter:
         url = f"{base_url}/images/edits"
         moderation_attempts = self._moderation_attempts(model.moderation)
         bypass_chain = moderation_bypass_enabled(model.moderation)
-        image_bytes = base64.b64decode(self._strip_data_url(input_images[0]))
+        try:
+            image_bytes = base64.b64decode(self._strip_data_url(input_images[0]), validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise GenerationError("输入图片不是有效的 base64 数据") from exc
         last_error = "OpenAI 改图失败"
 
         for moderation in moderation_attempts:

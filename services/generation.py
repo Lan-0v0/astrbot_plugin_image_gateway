@@ -94,7 +94,7 @@ class GenerationService:
         input_images: list[str] | None = None,
     ) -> tuple[list[Path], str, SendStrategy]:
         requested_count = self._normalize_requested_count(mode, count)
-        self.validate_request_count(requested_count)
+        self.validate_request_count(requested_count, mode=mode)
 
         errors: list[str] = []
         had_sensitive = False
@@ -214,11 +214,20 @@ class GenerationService:
             return await adapter.text_to_image(prompt, requested_count, target, self.output_dir, session)
         return await adapter.image_to_image(prompt, input_images or [], target, self.output_dir, session)
 
-    def validate_request_count(self, requested_count: int) -> None:
+    def validate_request_count(self, requested_count: int, *, mode: Mode = "text_to_image") -> None:
         if not self.targets:
             raise GenerationError("未配置任何已启用的图像目标")
 
-        if any(not self._request_count_exceeds_limit(target, requested_count) for target in self.targets):
+        applicable_targets = [
+            target
+            for target in self.targets
+            if not isinstance(target, WorkflowConfig) or target.supports_mode(mode)
+        ]
+
+        if not applicable_targets:
+            return
+
+        if any(not self._request_count_exceeds_limit(target, requested_count) for target in applicable_targets):
             return
 
         raise GenerationError("超出生成张数上限")

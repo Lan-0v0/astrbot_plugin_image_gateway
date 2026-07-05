@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import types
@@ -720,6 +721,29 @@ class ModerationOptionRegressionTests(unittest.TestCase):
             ]],
         )
 
+    def test_openai_image_to_image_rejects_invalid_base64_input(self) -> None:
+        adapter = OpenAIAdapter()
+        model = ModelConfig(
+            provider="openai",
+            display_name="OpenAI",
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name="test-model",
+        )
+
+        with self.assertRaises(GenerationError) as raised_error:
+            asyncio.run(
+                adapter.image_to_image(
+                    "测试",
+                    ["not-valid-base64"],
+                    model,
+                    Path("."),
+                    FakeClientSession(),
+                )
+            )
+
+        self.assertEqual(str(raised_error.exception), "输入图片不是有效的 base64 数据")
+
 
 class JsonPathRegressionTests(unittest.TestCase):
     def test_get_by_dot_path_reads_nested_dict_value(self) -> None:
@@ -821,8 +845,10 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
 
         workflow_items = schema["workflows"]["templates"]["comfyui"]["items"]
 
-        self.assertEqual(workflow_items["workflow_type_label"]["options"], ["ComfyUI"])
-        self.assertEqual(workflow_items["workflow_type_label"]["labels"], ["ComfyUI"])
+        self.assertNotIn("workflow_type_label", workflow_items)
+        self.assertEqual(workflow_items["workflow_type"]["description"], "类型")
+        self.assertEqual(workflow_items["workflow_type"]["options"], ["comfyui"])
+        self.assertEqual(workflow_items["workflow_type"]["labels"], ["ComfyUI"])
         self.assertEqual(
             workflow_items["supported_modes"]["options"],
             ["text_to_image", "both", "image_to_image"],
@@ -1285,7 +1311,13 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-    def build_model(self, display_name: str, *, priority: int = 0) -> ModelConfig:
+    def build_model(
+        self,
+        display_name: str,
+        *,
+        priority: int = 0,
+        max_generation_count: int = -1,
+    ) -> ModelConfig:
         return ModelConfig(
             provider="openai",
             display_name=display_name,
@@ -1293,6 +1325,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             apikey="test-key",
             model_name="test-model",
             priority=priority,
+            max_generation_count=max_generation_count,
         )
 
     async def test_workflow_and_model_targets_are_scheduled_by_priority(self) -> None:
@@ -1389,6 +1422,47 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
                 await service.generate(mode="text_to_image", prompt="测试")
 
         self.assertIn("暂不支持文生图", str(raised_error.exception))
+
+    async def test_validate_request_count_ignores_mode_mismatched_workflows(self) -> None:
+        image_only_workflow = self.build_workflow(
+            "ImageOnlyWorkflow",
+            priority=10,
+            supported_modes=["image_to_image"],
+        )
+        fallback_model = self.build_model("FallbackModel", priority=1, max_generation_count=2)
+        counter = FakeCounter()
+        service = GenerationService(
+            [image_only_workflow, fallback_model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=2,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        successful_adapter = types.SimpleNamespace(
+            text_to_image=self._return_generated_path,
+            image_to_image=self._return_generated_path,
+        )
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=successful_adapter,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, target_name, _effective_send_strategy = await service.generate(
+                mode="text_to_image",
+                prompt="测试",
+                count=2,
+            )
+
+        self.assertEqual(target_name, "FallbackModel")
+        self.assertEqual(paths, [Path("fallback_generated.png")])
 
     async def test_dual_entry_workflow_handles_image_to_image_requests(self) -> None:
         workflow_only = self.build_workflow(
