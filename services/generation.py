@@ -16,7 +16,7 @@ from .send_strategy import (
     parse_global_send_strategy,
     resolve_effective_send_strategy,
 )
-from .workflow_config import WorkflowConfig, WorkflowRuntimeConfig
+from .workflow_config import WorkflowConfig, WorkflowNodeBinding, WorkflowRuntimeConfig
 from .workflow_runner import ComfyUIWorkflowRunner
 
 Mode = Literal["text_to_image", "image_to_image"]
@@ -35,6 +35,7 @@ class GenerationService:
     def __init__(
         self,
         targets: list[GenerationTarget],
+        workflow_node_bindings: list[WorkflowNodeBinding],
         *,
         global_retry_count: int,
         global_max_generation_count: int,
@@ -44,6 +45,7 @@ class GenerationService:
         workflow_runtime_default: WorkflowRuntimeConfig | None = None,
     ):
         self.targets = targets
+        self.workflow_node_bindings = workflow_node_bindings
         self.global_retry_count = max(1, global_retry_count)
         self.global_max_generation_count = global_max_generation_count
         self.output_dir = output_dir
@@ -67,11 +69,19 @@ class GenerationService:
                 if isinstance(entry, dict):
                     targets.append(WorkflowConfig.from_template_entry(entry))
 
+        raw_workflow_node_bindings = config.get("workflow_node_bindings") or []
+        workflow_node_bindings: list[WorkflowNodeBinding] = []
+        if isinstance(raw_workflow_node_bindings, list):
+            for entry in raw_workflow_node_bindings:
+                if isinstance(entry, dict):
+                    workflow_node_bindings.append(WorkflowNodeBinding.from_template_entry(entry))
+
         enabled_targets = [target for target in targets if target.enabled]
         enabled_targets.sort(key=lambda item: item.priority, reverse=True)
 
         return cls(
             enabled_targets,
+            workflow_node_bindings,
             global_retry_count=int(config.get("global_retry_count", 2) or 2),
             global_max_generation_count=int(config.get("global_max_generation_count", 2) or 2),
             output_dir=output_dir,
@@ -181,11 +191,13 @@ class GenerationService:
         session: aiohttp.ClientSession,
     ) -> list[Path]:
         if isinstance(target, WorkflowConfig):
+            node_bindings = self._get_workflow_node_bindings(target.workflow_id)
             runtime_config = target.resolve_runtime_config(self.workflow_runtime_default)
             return await self._workflow_runner.generate_text_to_image(
                 prompt,
                 requested_count,
                 target,
+                node_bindings,
                 runtime_config,
                 self.output_dir,
                 session,
@@ -224,3 +236,10 @@ class GenerationService:
         if target.max_generation_count is not None and target.max_generation_count >= 0:
             return target.max_generation_count
         return self.global_max_generation_count
+
+    def _get_workflow_node_bindings(self, workflow_id: str) -> list[WorkflowNodeBinding]:
+        return [
+            binding
+            for binding in self.workflow_node_bindings
+            if binding.workflow_id == workflow_id
+        ]

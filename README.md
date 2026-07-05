@@ -96,19 +96,20 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `priority` | 优先级，与模型列表共用同一套顺序 |
 | `retry_count` | 重试次数，`-1` 表示使用全局默认 |
 | `max_generation_count` | 单次请求最大生成张数，`-1` 表示使用全局默认 |
+| `workflow_id` | 工作流唯一标识，用于关联下方的工作流自定义节点条目 |
 | `workflow_type` | 工作流类型，当前仅支持 `comfyui` |
 | `runtime_base_url_override` | 覆盖 ComfyUI 地址；留空则使用全局默认 |
 | `runtime_api_key_override` | 覆盖 ComfyUI 鉴权 Token；留空则使用全局默认 |
 | `workflow_content` | **必须**是从 ComfyUI 点击“导出（API 格式）”得到的完整 JSON |
-| `workflow_variable_bindings` | 自定义节点条目（见下文） |
 | `send_strategy` | 该工作流的发送链路，默认 `follow_global` |
 
-#### 自定义节点条目（`workflow_variable_bindings`）
+#### 工作流自定义节点条目（`workflow_node_bindings`）
 
-这里就是你在配置面板里看到的“自定义节点条目”。你可以一条一条新增规则，用 **“节点 ID + 字段路径”** 精确定位 `workflow_content` 中的某个字段，再根据你选择的内容类型，用输入内容去覆盖该字段原有值；最终合并后的 workflow 才会被提交执行。
+这里就是你在配置面板里看到的“自定义节点条目”。它现在已经从工作流条目内部拆出来，变成单独的顶层列表。你可以一条一条新增规则，用 **“工作流 ID + 节点 ID + 字段路径”** 精确定位某个 workflow 的字段，再根据你选择的内容类型，用输入内容去覆盖该字段原有值；最终合并后的 workflow 才会被提交执行。
 
 | 字段 | 说明 |
 |------|------|
+| `workflow_id` | 该条规则属于哪个工作流，必须与某个工作流条目的 `workflow_id` 完全一致 |
 | `node_id` | 对应 `workflow_content` 中该节点的 Key（例如 ComfyUI 导出 JSON 里的 `"6"`） |
 | `field_path` | 点路径，例如 `inputs.text` 或 `inputs.texts.0`（支持列表下标） |
 | `binding_type` | 内容类型（见下表） |
@@ -129,6 +130,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 
 ```json
 {
+  "workflow_id": "portrait_flux",
   "node_id": "6",
   "field_path": "inputs.text",
   "binding_type": "prompt_positive"
@@ -137,6 +139,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 
 你也可以把它理解成：
 
+- `workflow_id`：这条规则属于哪个工作流
 - `node_id`：改哪一个节点
 - `field_path`：改这个节点里的哪一项
 - `binding_type`：这项内容是什么类型

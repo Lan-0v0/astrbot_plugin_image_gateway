@@ -258,6 +258,7 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
         counter = FakeCounter({primary_model.model_key(): 1})
         service = GenerationService(
             [primary_model, secondary_model],
+            [],
             global_retry_count=1,
             global_max_generation_count=-1,
             output_dir=Path("."),
@@ -295,6 +296,7 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
         )
         service = GenerationService(
             [primary_model, secondary_model],
+            [],
             global_retry_count=1,
             global_max_generation_count=-1,
             output_dir=Path("."),
@@ -315,6 +317,7 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
         counter = FakeCounter({model.model_key(): 999})
         service = GenerationService(
             [model],
+            [],
             global_retry_count=1,
             global_max_generation_count=2,
             output_dir=Path("."),
@@ -726,30 +729,39 @@ class SendStrategyRegressionTests(unittest.TestCase):
 class WorkflowConfigRegressionTests(unittest.TestCase):
     def test_workflow_node_binding_from_template_entry_falls_back_to_custom_text(self) -> None:
         node_binding = WorkflowNodeBinding.from_template_entry(
-            {"node_id": "6", "field_path": "inputs.text", "binding_type": "not-a-real-type"}
+            {
+                "workflow_id": "portrait_flux",
+                "node_id": "6",
+                "field_path": "inputs.text",
+                "binding_type": "not-a-real-type",
+            }
         )
+        self.assertEqual(node_binding.workflow_id, "portrait_flux")
         self.assertEqual(node_binding.binding_type, "custom_text")
 
     def test_from_template_entry_parses_bindings_and_defaults(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
             {
+                "workflow_id": "portrait_flux",
                 "display_name": "我的 ComfyUI 工作流",
                 "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
-                "workflow_variable_bindings": [
-                    {
-                        "node_id": "6",
-                        "field_path": "inputs.text",
-                        "binding_type": "prompt_positive",
-                    }
-                ],
             }
         )
 
+        self.assertEqual(workflow_config.workflow_id, "portrait_flux")
         self.assertEqual(workflow_config.workflow_type, "comfyui")
         self.assertEqual(workflow_config.kind, "workflow")
         self.assertEqual(workflow_config.send_strategy, FOLLOW_GLOBAL)
-        self.assertEqual(len(workflow_config.node_bindings), 1)
-        self.assertEqual(workflow_config.node_bindings[0].binding_type, "prompt_positive")
+
+    def test_from_template_entry_falls_back_to_display_name_as_workflow_id(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "display_name": "默认工作流ID",
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+            }
+        )
+
+        self.assertEqual(workflow_config.workflow_id, "默认工作流ID")
 
     def test_from_template_entry_falls_back_to_comfyui_for_unknown_workflow_type(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry({"workflow_type": "unknown-engine"})
@@ -791,47 +803,76 @@ class WorkflowMergeRegressionTests(unittest.TestCase):
     def build_workflow_config(
         self,
         workflow_payload: dict[str, Any],
-        node_bindings: list[dict[str, Any]],
     ) -> WorkflowConfig:
         return WorkflowConfig.from_template_entry(
             {
+                "workflow_id": "portrait_flux",
                 "display_name": "测试工作流",
                 "workflow_content": json.dumps(workflow_payload),
-                "workflow_variable_bindings": node_bindings,
             }
         )
 
     def test_merge_overwrites_positive_prompt_via_node_id_and_field_path(self) -> None:
         workflow_config = self.build_workflow_config(
             {"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "placeholder", "clip": ["4", 1]}}},
-            [{"node_id": "6", "field_path": "inputs.text", "binding_type": "prompt_positive"}],
         )
 
-        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="一只猫在草地上奔跑")
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="6",
+                field_path="inputs.text",
+                binding_type="prompt_positive",
+            )
+        ]
+
+        merged_payload = merge_workflow_payload(
+            workflow_config,
+            node_bindings,
+            positive_prompt="一只猫在草地上奔跑",
+        )
 
         self.assertEqual(merged_payload["6"]["inputs"]["text"], "一只猫在草地上奔跑")
         self.assertEqual(merged_payload["6"]["inputs"]["clip"], ["4", 1])
 
     def test_merge_overwrites_list_index_field_path(self) -> None:
-        workflow_config = self.build_workflow_config(
-            {"9": {"inputs": {"texts": ["old-a", "old-b"]}}},
-            [{"node_id": "9", "field_path": "inputs.texts.1", "binding_type": "custom_text", "custom_value": "new-b"}],
-        )
+        workflow_config = self.build_workflow_config({"9": {"inputs": {"texts": ["old-a", "old-b"]}}})
 
-        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="unused")
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="9",
+                field_path="inputs.texts.1",
+                binding_type="custom_text",
+                custom_value="new-b",
+            )
+        ]
+
+        merged_payload = merge_workflow_payload(workflow_config, node_bindings, positive_prompt="unused")
 
         self.assertEqual(merged_payload["9"]["inputs"]["texts"], ["old-a", "new-b"])
 
     def test_merge_custom_number_keeps_numeric_type_not_string(self) -> None:
-        workflow_config = self.build_workflow_config(
-            {"3": {"inputs": {"cfg": 7.0, "steps": 20}}},
-            [
-                {"node_id": "3", "field_path": "inputs.cfg", "binding_type": "custom_number", "custom_value": "4.5"},
-                {"node_id": "3", "field_path": "inputs.steps", "binding_type": "custom_number", "custom_value": "30"},
-            ],
-        )
+        workflow_config = self.build_workflow_config({"3": {"inputs": {"cfg": 7.0, "steps": 20}}})
 
-        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="unused")
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="3",
+                field_path="inputs.cfg",
+                binding_type="custom_number",
+                custom_value="4.5",
+            ),
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="3",
+                field_path="inputs.steps",
+                binding_type="custom_number",
+                custom_value="30",
+            ),
+        ]
+
+        merged_payload = merge_workflow_payload(workflow_config, node_bindings, positive_prompt="unused")
 
         self.assertEqual(merged_payload["3"]["inputs"]["cfg"], 4.5)
         self.assertIsInstance(merged_payload["3"]["inputs"]["cfg"], float)
@@ -839,40 +880,70 @@ class WorkflowMergeRegressionTests(unittest.TestCase):
         self.assertIsInstance(merged_payload["3"]["inputs"]["steps"], int)
 
     def test_merge_random_seed_when_custom_value_is_empty(self) -> None:
-        workflow_config = self.build_workflow_config(
-            {"3": {"inputs": {"seed": 0}}},
-            [{"node_id": "3", "field_path": "inputs.seed", "binding_type": "seed", "custom_value": ""}],
-        )
+        workflow_config = self.build_workflow_config({"3": {"inputs": {"seed": 0}}})
 
-        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="unused")
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="3",
+                field_path="inputs.seed",
+                binding_type="seed",
+                custom_value="",
+            )
+        ]
+
+        merged_payload = merge_workflow_payload(workflow_config, node_bindings, positive_prompt="unused")
 
         self.assertIsInstance(merged_payload["3"]["inputs"]["seed"], int)
 
     def test_merge_raises_generation_error_for_missing_node(self) -> None:
-        workflow_config = self.build_workflow_config(
-            {"6": {"inputs": {"text": "placeholder"}}},
-            [{"node_id": "999", "field_path": "inputs.text", "binding_type": "prompt_positive"}],
-        )
+        workflow_config = self.build_workflow_config({"6": {"inputs": {"text": "placeholder"}}})
+
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="999",
+                field_path="inputs.text",
+                binding_type="prompt_positive",
+            )
+        ]
 
         with self.assertRaises(GenerationError):
-            merge_workflow_payload(workflow_config, positive_prompt="不会用到")
+            merge_workflow_payload(workflow_config, node_bindings, positive_prompt="不会用到")
 
     def test_merge_raises_generation_error_for_invalid_field_path(self) -> None:
-        workflow_config = self.build_workflow_config(
-            {"6": {"inputs": {"text": "placeholder"}}},
-            [{"node_id": "6", "field_path": "inputs.missing_field", "binding_type": "prompt_positive"}],
-        )
+        workflow_config = self.build_workflow_config({"6": {"inputs": {"text": "placeholder"}}})
+
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="6",
+                field_path="inputs.missing_field",
+                binding_type="prompt_positive",
+            )
+        ]
 
         with self.assertRaises(GenerationError):
-            merge_workflow_payload(workflow_config, positive_prompt="不会用到")
+            merge_workflow_payload(workflow_config, node_bindings, positive_prompt="不会用到")
 
     def test_merge_skips_image_input_binding_when_no_images_provided(self) -> None:
-        workflow_config = self.build_workflow_config(
-            {"10": {"inputs": {"image": "placeholder.png"}}},
-            [{"node_id": "10", "field_path": "inputs.image", "binding_type": "image_input"}],
-        )
+        workflow_config = self.build_workflow_config({"10": {"inputs": {"image": "placeholder.png"}}})
 
-        merged_payload = merge_workflow_payload(workflow_config, positive_prompt="unused", input_images=None)
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="10",
+                field_path="inputs.image",
+                binding_type="image_input",
+            )
+        ]
+
+        merged_payload = merge_workflow_payload(
+            workflow_config,
+            node_bindings,
+            positive_prompt="unused",
+            input_images=None,
+        )
 
         self.assertEqual(merged_payload["10"]["inputs"]["image"], "placeholder.png")
 
@@ -881,12 +952,10 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
     def build_workflow(self, display_name: str, *, priority: int = 0) -> WorkflowConfig:
         return WorkflowConfig.from_template_entry(
             {
+                "workflow_id": display_name.lower(),
                 "display_name": display_name,
                 "priority": priority,
                 "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
-                "workflow_variable_bindings": [
-                    {"node_id": "6", "field_path": "inputs.text", "binding_type": "prompt_positive"}
-                ],
             }
         )
 
@@ -906,13 +975,30 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         counter = FakeCounter()
         service = GenerationService(
             [high_priority_workflow, low_priority_model],
+            [
+                WorkflowNodeBinding(
+                    workflow_id=high_priority_workflow.workflow_id,
+                    node_id="6",
+                    field_path="inputs.text",
+                    binding_type="prompt_positive",
+                )
+            ],
             global_retry_count=1,
             global_max_generation_count=-1,
             output_dir=Path("."),
             counter=counter,
         )
 
-        async def fake_generate_text_to_image(self, prompt, count, workflow_config, runtime_config, output_dir, session):
+        async def fake_generate_text_to_image(
+            self,
+            prompt,
+            count,
+            workflow_config,
+            node_bindings,
+            runtime_config,
+            output_dir,
+            session,
+        ):
             return [Path("workflow_generated.png")]
 
         with (
@@ -937,6 +1023,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         counter = FakeCounter()
         service = GenerationService(
             [workflow_only],
+            [],
             global_retry_count=1,
             global_max_generation_count=-1,
             output_dir=Path("."),
@@ -958,13 +1045,30 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         counter = FakeCounter()
         service = GenerationService(
             [failing_workflow, fallback_model],
+            [
+                WorkflowNodeBinding(
+                    workflow_id=failing_workflow.workflow_id,
+                    node_id="6",
+                    field_path="inputs.text",
+                    binding_type="prompt_positive",
+                )
+            ],
             global_retry_count=1,
             global_max_generation_count=-1,
             output_dir=Path("."),
             counter=counter,
         )
 
-        async def fake_generate_text_to_image(self, prompt, count, workflow_config, runtime_config, output_dir, session):
+        async def fake_generate_text_to_image(
+            self,
+            prompt,
+            count,
+            workflow_config,
+            node_bindings,
+            runtime_config,
+            output_dir,
+            session,
+        ):
             raise GenerationError("ComfyUI 连接失败")
 
         successful_adapter = types.SimpleNamespace(
@@ -1007,9 +1111,18 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             ],
             "workflows": [
                 {
+                    "workflow_id": "test-workflow",
                     "display_name": "TestWorkflow",
                     "priority": 10,
                     "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+                }
+            ],
+            "workflow_node_bindings": [
+                {
+                    "workflow_id": "test-workflow",
+                    "node_id": "6",
+                    "field_path": "inputs.text",
+                    "binding_type": "prompt_positive",
                 }
             ],
         }
@@ -1018,6 +1131,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(service.targets), 2)
         self.assertEqual(service.targets[0].display_name, "TestWorkflow")
         self.assertEqual(service.targets[1].display_name, "TestModel")
+        self.assertEqual(len(service.workflow_node_bindings), 1)
 
 
 if __name__ == "__main__":

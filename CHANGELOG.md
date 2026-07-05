@@ -1,3 +1,9 @@
+## v1.2.2
+
+- 将 Workflow 配置从“工作流条目内嵌节点绑定列表”重构为“工作流列表 + 工作流自定义节点条目列表”的拆分结构
+- 为工作流条目新增 `workflow_id`，通过 `workflow_id + node_id + field_path` 关联并定位节点覆盖规则
+- 优化 Workflow 文档与配置说明，使工作流条目和自定义节点条目的职责边界更清晰
+
 ## v1.2.1
 
 - 优化 Workflow 配置面板文案与结构表达，使 `workflow_variable_bindings` 以更符合用户认知的“自定义节点条目”形式呈现
