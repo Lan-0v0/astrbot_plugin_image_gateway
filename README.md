@@ -1,4 +1,4 @@
-# <img width="128" height="128" alt="图像网关插件看板娘128x128" src="https://github.com/user-attachments/assets/18bfcd7d-3c24-4e5c-91f7-f52b63f8ac89"  />astrbot\_plugin\_image\_gateway
+# <img width="128" height="128" alt="图像网关插件看板娘128x128" src="https://github.com/user-attachments/assets/18bfcd7d-3c24-4e5c-91f7-f52b63f8ac89"    />astrbot\_plugin\_image\_gateway
 
 
 
