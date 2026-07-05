@@ -20,9 +20,9 @@ from .services.send_strategy import SendStrategy, get_sender_order, parse_global
 from .utils.messages import collect_input_images, parse_command_text, parse_count_and_prompt
 
 PLUGIN_NAME = "astrbot_plugin_image_gateway"
-DEFAULT_START_MESSAGES = ["开始生成"]
+DEFAULT_START_MESSAGES = ["开始生成0v0~"]
 DEFAULT_LLM_CUSTOM_PERSONA_PROMPT = (
-    "根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式不使用emoji，10字以内。"
+    "根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式，10字以内，结尾不加标点符号换成颜文字表情，严禁使用emoji。"
 )
 LLM_START_MESSAGE_PROMPT_TEMPLATE = (
     "请用简短自然的中文，向用户发送一句{label}开始前的提示。"
@@ -34,7 +34,7 @@ LLM_START_MESSAGE_PROMPT_TEMPLATE = (
 class GenerationStartMessageConfig:
     enabled: bool = True
     mode: str = "fixed"
-    fixed_messages: list[str] = field(default_factory=lambda: ["开始生成"])
+    fixed_messages: list[str] = field(default_factory=lambda: ["开始生成0v0~"])
     llm_provider_id: str = ""
     llm_persona_source: str = "current"
     llm_custom_persona_prompt: str = DEFAULT_LLM_CUSTOM_PERSONA_PROMPT
@@ -51,7 +51,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/ComfyUI Workflow、优先级回退与自然语言触发",
-    "1.3.1",
+    "1.3.2",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):

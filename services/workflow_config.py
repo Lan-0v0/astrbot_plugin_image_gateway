@@ -71,7 +71,7 @@ class WorkflowRuntimeConfig:
     base_url: str = "http://127.0.0.1:8188"
     api_key: str = ""
     poll_interval_seconds: float = 1.0
-    timeout_seconds: int = 180
+    timeout_seconds: int = 300
 
     @classmethod
     def from_raw(cls, raw_config: Any) -> WorkflowRuntimeConfig:
@@ -80,7 +80,7 @@ class WorkflowRuntimeConfig:
             base_url=str(config_dict.get("base_url") or "http://127.0.0.1:8188").strip().rstrip("/"),
             api_key=str(config_dict.get("api_key") or "").strip(),
             poll_interval_seconds=float(config_dict.get("poll_interval_seconds") or 1.0),
-            timeout_seconds=int(config_dict.get("timeout_seconds") or 180),
+            timeout_seconds=int(config_dict.get("timeout_seconds") or 300),
         )
 
     def with_overrides(self, *, base_url_override: str, api_key_override: str) -> WorkflowRuntimeConfig:

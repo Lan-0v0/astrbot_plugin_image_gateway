@@ -136,6 +136,7 @@ from astrbot_plugin_image_gateway.adapters.base import GenerationError, ModelCon
 from astrbot_plugin_image_gateway.adapters.gemini import GeminiAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.openai import OpenAIAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.main import (  # noqa: E402
+    DEFAULT_START_MESSAGES,
     DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
     GenerationStartMessageConfig,
     ImageGatewayPlugin,
@@ -464,6 +465,10 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         self.assertEqual(
             start_message_config.llm_custom_persona_prompt,
             DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
+        )
+        self.assertEqual(
+            DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
+            "根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式，10字以内，结尾不加标点符号换成颜文字表情，严禁使用emoji。",
         )
 
     def test_load_start_message_config_supports_enabled_switch(self) -> None:
@@ -857,6 +862,48 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             workflow_items["supported_modes"]["labels"],
             ["仅文生图", "文生图 + 改图", "仅改图"],
         )
+
+    def test_conf_schema_documents_priority_preset_numeric_values(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        model_priority_hint = schema["models"]["templates"]["openai"]["items"]["priority"]["hint"]
+        workflow_priority_hint = schema["workflows"]["templates"]["comfyui"]["items"]["priority"]["hint"]
+
+        for hint in (model_priority_hint, workflow_priority_hint):
+            self.assertIn("最高=40", hint)
+            self.assertIn("高=30", hint)
+            self.assertIn("普通=20", hint)
+            self.assertIn("低=10", hint)
+            self.assertIn("最低=0", hint)
+
+    def test_conf_schema_fixed_message_default_matches_code_default(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        fixed_messages = schema["generation_start_message"]["items"]["fixed_messages"]["default"]
+        fixed_messages_hint = schema["generation_start_message"]["items"]["fixed_messages"]["hint"]
+
+        self.assertEqual(DEFAULT_START_MESSAGES, ["开始生成0v0~"])
+        self.assertEqual(fixed_messages, DEFAULT_START_MESSAGES)
+        self.assertIn("开始生成0v0~", fixed_messages_hint)
+
+    def test_conf_schema_llm_prompt_default_matches_code_default(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        llm_prompt_default = schema["generation_start_message"]["items"]["llm_custom_persona_prompt"]["default"]
+
+        self.assertEqual(llm_prompt_default, DEFAULT_LLM_CUSTOM_PERSONA_PROMPT)
+        self.assertIn("颜文字表情", llm_prompt_default)
+        self.assertIn("严禁使用emoji", llm_prompt_default)
+
+    def test_workflow_runtime_default_timeout_matches_schema_default(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        runtime_timeout_default = schema["workflow_runtime_default"]["items"]["timeout_seconds"]["default"]
+        runtime_config = WorkflowRuntimeConfig.from_raw({})
+
+        self.assertEqual(runtime_timeout_default, 300)
+        self.assertEqual(runtime_config.timeout_seconds, 300)
+        self.assertEqual(runtime_config.base_url, "http://127.0.0.1:8188")
 
     def test_workflow_node_binding_from_template_entry_falls_back_to_custom_text(self) -> None:
         node_binding = WorkflowNodeBinding.from_template_entry(
