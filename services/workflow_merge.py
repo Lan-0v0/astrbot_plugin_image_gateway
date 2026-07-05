@@ -13,6 +13,7 @@ _SKIP_BINDING = object()
 
 def merge_workflow_payload(
     workflow_config: WorkflowConfig,
+    node_bindings: list[WorkflowNodeBinding],
     *,
     positive_prompt: str,
     input_images: list[str] | None = None,
@@ -24,7 +25,7 @@ def merge_workflow_payload(
     """
     workflow_payload = copy.deepcopy(workflow_config.parsed_workflow_content())
 
-    for binding in workflow_config.node_bindings:
+    for binding in node_bindings:
         _apply_single_binding(
             workflow_payload,
             binding,

@@ -24,10 +24,10 @@ SUPPORTED_BINDING_TYPES = {
 class WorkflowNodeBinding:
     """A single ``node_id + field_path`` override applied to a workflow payload."""
 
+    workflow_id: str
     node_id: str
     field_path: str
     binding_type: str
-    display_name: str = "节点覆盖规则"
     custom_value: str = ""
 
     @classmethod
@@ -47,7 +47,7 @@ class WorkflowNodeBinding:
             custom_value = str(entry.get("custom_number_value") or custom_value)
 
         return cls(
-            display_name=str(entry.get("display_name") or "节点覆盖规则").strip() or "节点覆盖规则",
+            workflow_id=str(entry.get("workflow_id") or "").strip(),
             node_id=str(entry.get("node_id") or "").strip(),
             field_path=str(entry.get("field_path") or "").strip(),
             binding_type=binding_type,
@@ -87,10 +87,10 @@ class WorkflowRuntimeConfig:
 class WorkflowConfig:
     """A single configured workflow entry (e.g. a ComfyUI graph)."""
 
+    workflow_id: str
     display_name: str
     workflow_type: str
     workflow_content_raw: str
-    node_bindings: list[WorkflowNodeBinding] = field(default_factory=list)
     priority: int = 0
     enabled: bool = True
     retry_count: int = -1
@@ -107,18 +107,15 @@ class WorkflowConfig:
         if workflow_type not in SUPPORTED_WORKFLOW_TYPES:
             workflow_type = "comfyui"
 
-        raw_bindings = entry.get("workflow_variable_bindings") or []
-        node_bindings: list[WorkflowNodeBinding] = []
-        if isinstance(raw_bindings, list):
-            for binding_entry in raw_bindings:
-                if isinstance(binding_entry, dict):
-                    node_bindings.append(WorkflowNodeBinding.from_template_entry(binding_entry))
+        workflow_id = str(entry.get("workflow_id") or "").strip() or str(
+            entry.get("display_name") or "未命名工作流"
+        ).strip()
 
         return cls(
+            workflow_id=workflow_id,
             display_name=str(entry.get("display_name") or "未命名工作流"),
             workflow_type=workflow_type,
             workflow_content_raw=str(entry.get("workflow_content") or ""),
-            node_bindings=node_bindings,
             priority=resolve_priority_value(entry, default_priority=10),
             enabled=bool(entry.get("enabled", True)),
             retry_count=int(entry.get("retry_count", -1)),
@@ -130,7 +127,7 @@ class WorkflowConfig:
         )
 
     def model_key(self) -> str:
-        return f"workflow|{self.workflow_type}|{self.display_name}"
+        return f"workflow|{self.workflow_type}|{self.workflow_id}|{self.display_name}"
 
     def parsed_workflow_content(self) -> dict[str, Any]:
         try:

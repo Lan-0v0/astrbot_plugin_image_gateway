@@ -1,8 +1,8 @@
 name: astrbot_plugin_image_gateway
 display_name: 图像网关
-desc: 优化模型模板命名与节点内容类型说明，升级配置面板体验
+desc: 恢复顶层工作流自定义节点条目结构并优化配置面板命名提示
 short_desc: OpenAI/Gemini/ComfyUI 多模型生图与改图网关
-version: 1.2.6
+version: 1.2.7
 author: AstrBot
 repo: "https://github.com/Lan-0v0/astrbot_plugin_image_gateway"
 astrbot_version: ">=4.9.2,<5"
