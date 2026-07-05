@@ -63,6 +63,7 @@ class ModelConfig:
     def from_template_entry(cls, entry: dict[str, Any]) -> ModelConfig:
         # Imported lazily to avoid a hard import-time dependency from the
         # adapters package onto the services package.
+        from ..services.priority import resolve_priority_value
         from ..services.send_strategy import parse_entry_send_strategy
 
         template = str(
@@ -82,7 +83,7 @@ class ModelConfig:
             size=str(entry.get("size") or "1024x1024"),
             moderation=str(entry.get("moderation") or "auto"),
             seed=str(entry.get("seed") or "").strip(),
-            priority=int(entry.get("priority") or 0),
+            priority=resolve_priority_value(entry, default_priority=10),
             enabled=bool(entry.get("enabled", True)),
             retry_count=int(entry.get("retry_count", -1)),
             max_generation_count=int(entry.get("max_generation_count", -1)),

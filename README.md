@@ -68,9 +68,11 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 
 | 字段 | 说明 |
 |------|------|
+| `provider_label` | 类型说明，当前对应 OpenAI / Gemini |
 | `display_name` | 显示名称，用于日志与错误提示 |
 | `enabled` | 是否启用 |
-| `priority` | 优先级，数值越大越先使用 |
+| `priority_preset` | 优先级预设。推荐直接选择“最高 / 高 / 普通 / 低 / 最低”，大量条目时不必一个个手填数字 |
+| `priority` | 仅当 `priority_preset=custom` 时使用的自定义优先级数值，数值越大越优先 |
 | `url` | API 地址（OpenAI 如 `https://api.openai.com/v1`，Gemini 如 `https://generativelanguage.googleapis.com/v1beta`） |
 | `apikey` | API Key |
 | `model_name` | 模型 ID |
@@ -91,9 +93,11 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 
 | 字段 | 说明 |
 |------|------|
+| `workflow_type_label` | 类型说明，当前对应 ComfyUI |
 | `display_name` | 显示名称 |
 | `enabled` | 是否启用 |
-| `priority` | 优先级，与模型列表共用同一套顺序 |
+| `priority_preset` | 优先级预设。推荐直接选择“最高 / 高 / 普通 / 低 / 最低” |
+| `priority` | 仅当 `priority_preset=custom` 时使用的自定义优先级数值 |
 | `retry_count` | 重试次数，`-1` 表示使用全局默认 |
 | `max_generation_count` | 单次请求最大生成张数，`-1` 表示使用全局默认 |
 | `workflow_id` | 工作流唯一标识，用于关联下方的工作流自定义节点条目 |
@@ -113,7 +117,10 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `node_id` | 对应 `workflow_content` 中该节点的 Key（例如 ComfyUI 导出 JSON 里的 `"6"`） |
 | `field_path` | 点路径，例如 `inputs.text` 或 `inputs.texts.0`（支持列表下标） |
 | `binding_type` | 内容类型（见下表） |
-| `custom_value` | 输入内容；部分类型会直接使用你这里填写的值 |
+| `prompt_negative_value` | 当内容类型是“反向提示词”时显示，填写反向提示词文本 |
+| `custom_text_value` | 当内容类型是“自定义文本”时显示，填写任意文本 |
+| `seed_value` | 当内容类型是“随机种子”时显示，留空则每次随机 |
+| `custom_number_value` | 当内容类型是“自定义数值”时显示，填写整数或小数 |
 
 `binding_type` 支持：
 
@@ -143,7 +150,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 - `node_id`：改哪一个节点
 - `field_path`：改这个节点里的哪一项
 - `binding_type`：这项内容是什么类型
-- `custom_value`：如果需要手动填值，就在这里填
+- 对于需要手动输入的类型，面板会按类型显示对应的输入框；`正向提示词` 和 `图片输入` 不会再显示可编辑输入框，只展示用途提示
 
 ### ComfyUI 运行环境（全局默认，`workflow_runtime_default`）
 
@@ -214,6 +221,18 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `result_pipeline_only` | 不做任何主动发送，直接走 AstrBot 结果管道（等价于回退到早期版本行为） |
 
 每个模型 / 工作流条目都可以单独设置 `send_strategy`；默认值为 `follow_global`，表示跟随本节的全局配置。
+
+### 优先级使用建议
+
+当条目比较多时，建议优先使用：
+
+- `最高`
+- `高`
+- `普通`
+- `低`
+- `最低`
+
+只有在你确实需要更细的排序时，再把 `priority_preset` 设为 `custom`，并手动填写 `priority` 数值。这样比逐个条目手填数字更省事，也更不容易出错。
 
 ## 使用说明
 

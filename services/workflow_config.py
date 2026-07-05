@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..adapters.base import GenerationError
+from .priority import resolve_priority_value
 from .send_strategy import parse_entry_send_strategy
 
 SUPPORTED_WORKFLOW_TYPES = {"comfyui"}
@@ -35,12 +36,22 @@ class WorkflowNodeBinding:
         if binding_type not in SUPPORTED_BINDING_TYPES:
             binding_type = "custom_text"
 
+        custom_value = str(entry.get("custom_value") or "")
+        if binding_type == "prompt_negative":
+            custom_value = str(entry.get("prompt_negative_value") or custom_value)
+        elif binding_type == "custom_text":
+            custom_value = str(entry.get("custom_text_value") or custom_value)
+        elif binding_type == "seed":
+            custom_value = str(entry.get("seed_value") or custom_value)
+        elif binding_type == "custom_number":
+            custom_value = str(entry.get("custom_number_value") or custom_value)
+
         return cls(
             workflow_id=str(entry.get("workflow_id") or "").strip(),
             node_id=str(entry.get("node_id") or "").strip(),
             field_path=str(entry.get("field_path") or "").strip(),
             binding_type=binding_type,
-            custom_value=str(entry.get("custom_value") or ""),
+            custom_value=custom_value,
         )
 
 
@@ -105,7 +116,7 @@ class WorkflowConfig:
             display_name=str(entry.get("display_name") or "未命名工作流"),
             workflow_type=workflow_type,
             workflow_content_raw=str(entry.get("workflow_content") or ""),
-            priority=int(entry.get("priority") or 0),
+            priority=resolve_priority_value(entry, default_priority=10),
             enabled=bool(entry.get("enabled", True)),
             retry_count=int(entry.get("retry_count", -1)),
             max_generation_count=int(entry.get("max_generation_count", -1)),

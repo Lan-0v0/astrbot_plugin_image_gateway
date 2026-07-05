@@ -26,10 +26,15 @@
     "type": "template_list",
     "templates": {
       "openai": {
-        "name": "OpenAI",
+        "name": "图像生成条目",
         "hint": "OpenAI Images API 或兼容网关",
         "display_item": "display_name",
         "items": {
+          "provider_label": {
+            "description": "类型",
+            "type": "string",
+            "default": "OpenAI"
+          },
           "display_name": {
             "description": "显示名称",
             "type": "string",
@@ -40,11 +45,36 @@
             "type": "bool",
             "default": true
           },
-          "priority": {
+          "priority_preset": {
             "description": "优先级",
-            "hint": "数值越大越优先",
+            "hint": "推荐优先使用预设。条目很多时，只需给重要模型选“最高/高/普通/低/最低”，无需一个个手填数字；只有非常特殊的排序需求才使用“自定义数值”",
+            "type": "string",
+            "default": "normal",
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
+          },
+          "priority": {
+            "description": "自定义优先级数值",
+            "hint": "仅在“优先级”选择“自定义数值”时使用；数值越大越优先",
             "type": "int",
-            "default": 10
+            "default": 10,
+            "condition": {
+              "priority_preset": "custom"
+            }
           },
           "url": {
             "description": "API 地址",
@@ -148,10 +178,15 @@
         }
       },
       "gemini": {
-        "name": "Gemini",
+        "name": "图像生成条目",
         "hint": "Google Gemini 图像生成或 Imagen 兼容接口",
         "display_item": "display_name",
         "items": {
+          "provider_label": {
+            "description": "类型",
+            "type": "string",
+            "default": "Gemini"
+          },
           "display_name": {
             "description": "显示名称",
             "type": "string",
@@ -162,11 +197,36 @@
             "type": "bool",
             "default": true
           },
-          "priority": {
+          "priority_preset": {
             "description": "优先级",
-            "hint": "数值越大越优先",
+            "hint": "推荐优先使用预设。条目很多时，只需给重要模型选“最高/高/普通/低/最低”，无需一个个手填数字；只有非常特殊的排序需求才使用“自定义数值”",
+            "type": "string",
+            "default": "normal",
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
+          },
+          "priority": {
+            "description": "自定义优先级数值",
+            "hint": "仅在“优先级”选择“自定义数值”时使用；数值越大越优先",
             "type": "int",
-            "default": 10
+            "default": 10,
+            "condition": {
+              "priority_preset": "custom"
+            }
           },
           "url": {
             "description": "API 地址",
@@ -280,10 +340,15 @@
     "type": "template_list",
     "templates": {
       "comfyui": {
-        "name": "ComfyUI",
+        "name": "工作流条目",
         "hint": "需要粘贴 ComfyUI 使用“导出（API 格式）”得到的完整工作流 JSON",
         "display_item": "display_name",
         "items": {
+          "workflow_type_label": {
+            "description": "类型",
+            "type": "string",
+            "default": "ComfyUI"
+          },
           "workflow_id": {
             "description": "工作流 ID",
             "hint": "用于关联下方“工作流自定义节点条目”。建议使用稳定、唯一的英文或拼音标识，例如 portrait_flux",
@@ -300,11 +365,36 @@
             "type": "bool",
             "default": true
           },
-          "priority": {
+          "priority_preset": {
             "description": "优先级",
-            "hint": "数值越大越优先；与图像生成模型列表共用同一套优先级顺序",
+            "hint": "推荐优先使用预设。条目很多时，只需给重要工作流选“最高/高/普通/低/最低”，无需一个个手填数字；只有非常特殊的排序需求才使用“自定义数值”",
+            "type": "string",
+            "default": "normal",
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
+          },
+          "priority": {
+            "description": "自定义优先级数值",
+            "hint": "仅在“优先级”选择“自定义数值”时使用；数值越大越优先",
             "type": "int",
-            "default": 10
+            "default": 10,
+            "condition": {
+              "priority_preset": "custom"
+            }
           },
           "retry_count": {
             "description": "重试次数",
@@ -373,13 +463,19 @@
   },
   "workflow_node_bindings": {
     "description": "工作流自定义节点条目",
-    "hint": "为某个工作流新增一条节点覆盖规则。通过“工作流 ID + 节点 ID + 字段路径”精确定位 workflow_content 中的字段，再用内容类型和输入内容覆盖它",
+    "hint": "它是用来告诉插件：工作流里的哪个节点、哪个字段，应该被什么内容自动替换。你可以把它理解成“工作流参数替换规则列表”",
     "type": "template_list",
     "templates": {
       "binding": {
         "name": "自定义节点条目",
-        "display_item": "workflow_id",
+        "display_item": "display_name",
         "items": {
+          "display_name": {
+            "description": "显示名称",
+            "hint": "给这条规则起一个你自己容易识别的名字，例如“正向提示词节点”“反向提示词节点”“CFG 参数节点”",
+            "type": "string",
+            "default": "节点覆盖规则"
+          },
           "workflow_id": {
             "description": "所属工作流 ID",
             "hint": "必须与上方某个工作流条目的“工作流 ID”完全一致",
@@ -388,13 +484,13 @@
           },
           "node_id": {
             "description": "节点 ID",
-            "hint": "对应 workflow_content 中该节点的 Key",
+            "hint": "就是工作流 JSON 里最外层那串节点编号。例如最外层如果有一个编号 6 的节点，那这里就填 6。你只需要照着导出的 API JSON 里最外层的编号填写即可",
             "type": "string",
             "default": ""
           },
           "field_path": {
             "description": "字段路径",
-            "hint": "点路径，例如 inputs.text 或 inputs.texts.0",
+            "hint": "用点号一步一步定位到你想修改的那一项。最常见的是 inputs.text，表示“这个节点里的 inputs 下面的 text”。如果某一项是列表里的第 1 个元素，就像 inputs.texts.0 这样写，最后的 0 表示第一个位置",
             "type": "string",
             "default": "inputs.text"
           },
@@ -419,11 +515,59 @@
               "自定义数值"
             ]
           },
-          "custom_value": {
+          "prompt_negative_value": {
             "description": "输入内容",
-            "hint": "正向提示词会自动使用 /生图 的提示词；反向提示词/任意文本请直接填写文本；随机种子留空则每次随机；任意数值请填写数字（含小数点则按浮点数处理）",
+            "hint": "这里填写你想固定写入工作流的反向提示词文本",
             "type": "string",
-            "default": ""
+            "default": "",
+            "condition": {
+              "binding_type": "prompt_negative"
+            }
+          },
+          "custom_text_value": {
+            "description": "输入内容",
+            "hint": "这里填写任意你想覆盖进去的文本内容",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "binding_type": "custom_text"
+            }
+          },
+          "seed_value": {
+            "description": "输入内容",
+            "hint": "这里填写固定随机种子；留空则每次自动随机生成一个整数",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "binding_type": "seed"
+            }
+          },
+          "custom_number_value": {
+            "description": "输入内容",
+            "hint": "这里填写数字，例如 7、20、0.35。含小数点会按浮点数处理，否则按整数处理",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "binding_type": "custom_number"
+            }
+          },
+          "prompt_positive_help": {
+            "description": "正向提示词提示",
+            "hint": "此项应通过 /生图 /改图 指令输入",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "binding_type": "prompt_positive"
+            }
+          },
+          "image_input_help": {
+            "description": "图像输入提示",
+            "hint": "此项为 /改图 指令的专用，用于图像的传输",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "binding_type": "image_input"
+            }
           }
         }
       }
