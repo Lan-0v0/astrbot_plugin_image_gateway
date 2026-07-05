@@ -16,7 +16,7 @@ from .send_strategy import (
     parse_global_send_strategy,
     resolve_effective_send_strategy,
 )
-from .workflow_config import WorkflowConfig, WorkflowNodeBinding, WorkflowRuntimeConfig
+from .workflow_config import WorkflowConfig, WorkflowNodeBinding, WorkflowRuntimeConfig, describe_mode
 from .workflow_runner import ComfyUIWorkflowRunner
 
 Mode = Literal["text_to_image", "image_to_image"]
@@ -25,12 +25,7 @@ GenerationTarget = Union[ModelConfig, WorkflowConfig]
 
 
 class GenerationService:
-    """Schedules image generation across OpenAI/Gemini models and Workflow entries.
-
-    Both kinds of entries share the same scheduling attributes (``enabled``,
-    ``priority``, ``retry_count``, ``max_generation_count``, ``send_strategy``)
-    and are tried together in a single priority-ordered list.
-    """
+    """Schedules image generation across model and workflow targets."""
 
     def __init__(
         self,
@@ -109,10 +104,9 @@ class GenerationService:
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             for target in self.targets:
-                if target.kind == "workflow" and mode == "image_to_image":
-                    # 第一版工作流仅支持文生图，改图请求直接跳过该目标。
+                if isinstance(target, WorkflowConfig) and not target.supports_mode(mode):
                     mode_unsupported_target_count += 1
-                    errors.append(f"{target.display_name}: 当前版本工作流暂不支持改图")
+                    errors.append(f"{target.display_name}: 当前工作流暂不支持{describe_mode(mode)}")
                     continue
 
                 if self._request_count_exceeds_limit(target, requested_count):
@@ -148,8 +142,6 @@ class GenerationService:
                             )
                             return paths, target.display_name, effective_send_strategy
                     except SensitiveContentError as exc:
-                        # 安全审查失败不重试本目标（相同内容结果不变），
-                        # 记录后继续尝试下一个优先级目标；全部失败再统一上报。
                         had_sensitive = True
                         msg = f"{target.display_name}: {exc}"
                         logger.warning(msg)
@@ -173,7 +165,9 @@ class GenerationService:
             raise GenerationError("超出生成张数上限")
 
         if self.targets and mode_unsupported_target_count == len(self.targets):
-            raise GenerationError("已启用的工作流暂不支持改图，请配置支持改图的模型")
+            raise GenerationError(
+                f"已启用的工作流暂不支持{describe_mode(mode)}，请配置支持对应模式的模型或工作流"
+            )
 
         brief = errors[-1] if errors else "所有模型均生成失败"
         if len(brief) > 120:
@@ -193,9 +187,21 @@ class GenerationService:
         if isinstance(target, WorkflowConfig):
             node_bindings = self._get_workflow_node_bindings(target.workflow_id)
             runtime_config = target.resolve_runtime_config(self.workflow_runtime_default)
-            return await self._workflow_runner.generate_text_to_image(
+
+            if mode == "text_to_image":
+                return await self._workflow_runner.generate_text_to_image(
+                    prompt,
+                    requested_count,
+                    target,
+                    node_bindings,
+                    runtime_config,
+                    self.output_dir,
+                    session,
+                )
+
+            return await self._workflow_runner.generate_image_to_image(
                 prompt,
-                requested_count,
+                input_images or [],
                 target,
                 node_bindings,
                 runtime_config,
@@ -210,7 +216,7 @@ class GenerationService:
 
     def validate_request_count(self, requested_count: int) -> None:
         if not self.targets:
-            raise GenerationError("未配置任何已启用的图像模型")
+            raise GenerationError("未配置任何已启用的图像目标")
 
         if any(not self._request_count_exceeds_limit(target, requested_count) for target in self.targets):
             return

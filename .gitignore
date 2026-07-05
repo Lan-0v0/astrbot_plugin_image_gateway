@@ -35,6 +35,9 @@ data/
 images/
 generation_counts.json
 *.log
+tmp_comfyui_live_test/
+tmp_comfyui_live_test_json/
+comfyui_*.png
 
 # 密钥与本地配置
 .env

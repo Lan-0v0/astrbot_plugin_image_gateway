@@ -17,7 +17,12 @@ SUPPORTED_BINDING_TYPES = {
     "seed",
     "custom_text",
     "custom_number",
+    "mode_switch_text",
+    "mode_switch_number",
+    "mode_switch_json",
 }
+
+SUPPORTED_WORKFLOW_MODES = {"text_to_image", "image_to_image"}
 
 
 @dataclass
@@ -29,6 +34,8 @@ class WorkflowNodeBinding:
     field_path: str
     binding_type: str
     custom_value: str = ""
+    text_to_image_value: str = ""
+    image_to_image_value: str = ""
 
     @classmethod
     def from_template_entry(cls, entry: dict[str, Any]) -> WorkflowNodeBinding:
@@ -52,6 +59,8 @@ class WorkflowNodeBinding:
             field_path=str(entry.get("field_path") or "").strip(),
             binding_type=binding_type,
             custom_value=custom_value,
+            text_to_image_value=str(entry.get("text_to_image_value") or "").strip(),
+            image_to_image_value=str(entry.get("image_to_image_value") or "").strip(),
         )
 
 
@@ -98,6 +107,7 @@ class WorkflowConfig:
     send_strategy: str = "follow_global"
     runtime_base_url_override: str = ""
     runtime_api_key_override: str = ""
+    supported_modes: list[str] = field(default_factory=lambda: ["text_to_image"])
     kind: str = "workflow"
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -123,6 +133,7 @@ class WorkflowConfig:
             send_strategy=parse_entry_send_strategy(entry.get("send_strategy")),
             runtime_base_url_override=str(entry.get("runtime_base_url_override") or "").strip(),
             runtime_api_key_override=str(entry.get("runtime_api_key_override") or "").strip(),
+            supported_modes=_normalize_supported_modes(entry.get("supported_modes")),
             raw=entry,
         )
 
@@ -145,3 +156,31 @@ class WorkflowConfig:
             base_url_override=self.runtime_base_url_override,
             api_key_override=self.runtime_api_key_override,
         )
+
+    def supports_mode(self, mode: str) -> bool:
+        return mode in self.supported_modes
+
+
+def _normalize_supported_modes(raw_value: Any) -> list[str]:
+    if isinstance(raw_value, str) and raw_value.strip().lower() == "both":
+        raw_modes = ["text_to_image", "image_to_image"]
+    elif isinstance(raw_value, list):
+        raw_modes = raw_value
+    elif isinstance(raw_value, str):
+        raw_modes = [raw_value]
+    else:
+        raw_modes = []
+
+    normalized_modes: list[str] = []
+    for raw_mode in raw_modes:
+        mode = str(raw_mode or "").strip().lower()
+        if mode in SUPPORTED_WORKFLOW_MODES and mode not in normalized_modes:
+            normalized_modes.append(mode)
+
+    return normalized_modes or ["text_to_image"]
+
+
+def describe_mode(mode: str) -> str:
+    if mode == "image_to_image":
+        return "改图"
+    return "文生图"

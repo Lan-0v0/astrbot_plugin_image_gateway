@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import random
 from typing import Any
 
@@ -15,6 +16,7 @@ def merge_workflow_payload(
     workflow_config: WorkflowConfig,
     node_bindings: list[WorkflowNodeBinding],
     *,
+    mode: str = "text_to_image",
     positive_prompt: str,
     input_images: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -30,6 +32,7 @@ def merge_workflow_payload(
             workflow_payload,
             binding,
             workflow_display_name=workflow_config.display_name,
+            mode=mode,
             positive_prompt=positive_prompt,
             input_images=input_images or [],
         )
@@ -42,6 +45,7 @@ def _apply_single_binding(
     binding: WorkflowNodeBinding,
     *,
     workflow_display_name: str,
+    mode: str,
     positive_prompt: str,
     input_images: list[str],
 ) -> None:
@@ -61,6 +65,8 @@ def _apply_single_binding(
 
     resolved_value = _resolve_binding_value(
         binding,
+        mode=mode,
+        workflow_display_name=workflow_display_name,
         positive_prompt=positive_prompt,
         input_images=input_images,
     )
@@ -79,6 +85,8 @@ def _apply_single_binding(
 def _resolve_binding_value(
     binding: WorkflowNodeBinding,
     *,
+    mode: str,
+    workflow_display_name: str,
     positive_prompt: str,
     input_images: list[str],
 ) -> Any:
@@ -104,7 +112,31 @@ def _resolve_binding_value(
             return _SKIP_BINDING
         return input_images[0]
 
+    if binding_type == "mode_switch_text":
+        return _resolve_mode_switch_text(binding, mode=mode)
+
+    if binding_type == "mode_switch_number":
+        return _resolve_numeric_value(
+            _resolve_mode_switch_text(binding, mode=mode),
+            allow_random_int=False,
+        )
+
+    if binding_type == "mode_switch_json":
+        raw_value = _resolve_mode_switch_text(binding, mode=mode)
+        try:
+            return json.loads(raw_value)
+        except json.JSONDecodeError as exc:
+            raise GenerationError(
+                f"工作流「{workflow_display_name}」的模式切换 JSON 配置无效: {raw_value!r}"
+            ) from exc
+
     raise GenerationError(f"不支持的绑定类型: {binding_type}")
+
+
+def _resolve_mode_switch_text(binding: WorkflowNodeBinding, *, mode: str) -> str:
+    if mode == "image_to_image":
+        return binding.image_to_image_value
+    return binding.text_to_image_value
 
 
 def _resolve_numeric_value(raw_value: str, *, allow_random_int: bool) -> int | float:

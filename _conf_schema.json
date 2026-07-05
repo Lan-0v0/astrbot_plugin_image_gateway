@@ -340,14 +340,21 @@
     "type": "template_list",
     "templates": {
       "comfyui": {
-        "name": "工作流条目",
+        "name": "ComfyUI",
         "hint": "需要粘贴 ComfyUI 使用“导出（API 格式）”得到的完整工作流 JSON",
         "display_item": "display_name",
         "items": {
           "workflow_type_label": {
             "description": "类型",
+            "hint": "当前仅支持 ComfyUI",
             "type": "string",
-            "default": "ComfyUI"
+            "default": "ComfyUI",
+            "options": [
+              "ComfyUI"
+            ],
+            "labels": [
+              "ComfyUI"
+            ]
           },
           "workflow_id": {
             "description": "工作流 ID",
@@ -415,6 +422,25 @@
             "default": "comfyui",
             "options": [
               "comfyui"
+            ],
+            "labels": [
+              "ComfyUI"
+            ]
+          },
+          "supported_modes": {
+            "description": "支持模式",
+            "hint": "默认仅文生图；如果该 workflow 按单工作流双入口设计，可选择“文生图 + 改图”；如果它只用于改图，也可以选择“仅改图”",
+            "type": "string",
+            "default": "text_to_image",
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
             ]
           },
           "runtime_base_url_override": {
@@ -505,7 +531,10 @@
               "image_input",
               "seed",
               "custom_text",
-              "custom_number"
+              "custom_number",
+              "mode_switch_text",
+              "mode_switch_number",
+              "mode_switch_json"
             ],
             "labels": [
               "正向提示词",
@@ -513,7 +542,10 @@
               "图片输入",
               "随机种子",
               "自定义文本",
-              "自定义数值"
+              "自定义数值",
+              "模式切换文本",
+              "模式切换数值",
+              "模式切换 JSON"
             ]
           },
           "prompt_negative_value": {
@@ -550,6 +582,32 @@
             "default": "",
             "condition": {
               "binding_type": "custom_number"
+            }
+          },
+          "text_to_image_value": {
+            "description": "文生图值",
+            "hint": "模式切换绑定在 /生图 请求下使用的值。若为 JSON 类型，请填写合法 JSON，例如 [23, 0]",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "binding_type@in": [
+                "mode_switch_text",
+                "mode_switch_number",
+                "mode_switch_json"
+              ]
+            }
+          },
+          "image_to_image_value": {
+            "description": "改图值",
+            "hint": "模式切换绑定在 /改图 请求下使用的值。单工作流双入口常用来切换图生图分支、latent 引用或 denoise",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "binding_type@in": [
+                "mode_switch_text",
+                "mode_switch_number",
+                "mode_switch_json"
+              ]
             }
           }
         }

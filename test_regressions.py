@@ -155,6 +155,7 @@ from astrbot_plugin_image_gateway.services.workflow_config import (  # noqa: E40
     WorkflowRuntimeConfig,
 )
 from astrbot_plugin_image_gateway.services.workflow_merge import merge_workflow_payload  # noqa: E402
+from astrbot_plugin_image_gateway.services.workflow_runner import ComfyUIWorkflowRunner  # noqa: E402
 from astrbot_plugin_image_gateway.utils.json_path import get_by_dot_path, set_by_dot_path  # noqa: E402
 from astrbot_plugin_image_gateway.utils.messages import parse_command_text  # noqa: E402
 
@@ -242,7 +243,13 @@ class FakePlatform:
 
 
 class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
-    def build_model(self, display_name: str, *, max_generation_count: int = -1) -> ModelConfig:
+    def build_model(
+        self,
+        display_name: str,
+        *,
+        max_generation_count: int = -1,
+        priority: int = 0,
+    ) -> ModelConfig:
         return ModelConfig(
             provider="openai",
             display_name=display_name,
@@ -250,6 +257,7 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
             apikey="test-key",
             model_name="test-model",
             max_generation_count=max_generation_count,
+            priority=priority,
         )
 
     async def test_returns_quota_error_only_when_all_models_are_exhausted(self) -> None:
@@ -345,6 +353,69 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(model_name, "Primary")
         self.assertEqual(paths, [Path("generated.png")])
+
+    async def test_four_providers_fall_back_to_next_priority_provider_when_current_one_fails(self) -> None:
+        provider_specs = [
+            ("ProviderAlpha", 400),
+            ("ProviderBeta", 300),
+            ("ProviderGamma", 200),
+            ("ProviderDelta", 100),
+        ]
+
+        for failing_index in range(len(provider_specs) - 1):
+            failing_name, failing_priority = provider_specs[failing_index]
+            expected_fallback_name, _expected_fallback_priority = provider_specs[failing_index + 1]
+
+            with self.subTest(failing_provider=failing_name):
+                models = [
+                    self.build_model(
+                        name,
+                        priority=priority,
+                        # Force higher-priority providers before the failing one to be skipped,
+                        # so the chosen provider becomes the active candidate for this subtest.
+                        max_generation_count=0 if index < failing_index else -1,
+                    )
+                    for index, (name, priority) in enumerate(provider_specs)
+                ]
+                attempted_providers: list[str] = []
+
+                async def adapter_generate(_prompt, _count, target, _output_dir, _session):
+                    attempted_providers.append(target.display_name)
+                    if target.display_name == failing_name:
+                        raise GenerationError("模拟当前提供商生成失败")
+                    return [Path(f"{target.display_name}.png")]
+
+                service = GenerationService(
+                    models,
+                    [],
+                    global_retry_count=1,
+                    global_max_generation_count=-1,
+                    output_dir=Path("."),
+                    counter=FakeCounter(),
+                )
+                adapter = types.SimpleNamespace(
+                    text_to_image=adapter_generate,
+                    image_to_image=adapter_generate,
+                )
+
+                with (
+                    patch(
+                        "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                        return_value=adapter,
+                    ),
+                    patch(
+                        "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                        FakeClientSession,
+                    ),
+                ):
+                    paths, provider_name, _effective_send_strategy = await service.generate(
+                        mode="text_to_image",
+                        prompt="test prompt",
+                    )
+
+                self.assertEqual(provider_name, expected_fallback_name)
+                self.assertEqual(paths, [Path(f"{expected_fallback_name}.png")])
+                self.assertEqual(attempted_providers, [failing_name, expected_fallback_name])
 
     async def return_generated_path(self, *args, **kwargs):
         return [Path("generated.png")]
@@ -745,6 +816,22 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertNotIn("prompt_positive_help", binding_items)
         self.assertNotIn("image_input_help", binding_items)
 
+    def test_conf_schema_uses_select_options_for_workflow_type_and_supported_modes(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        workflow_items = schema["workflows"]["templates"]["comfyui"]["items"]
+
+        self.assertEqual(workflow_items["workflow_type_label"]["options"], ["ComfyUI"])
+        self.assertEqual(workflow_items["workflow_type_label"]["labels"], ["ComfyUI"])
+        self.assertEqual(
+            workflow_items["supported_modes"]["options"],
+            ["text_to_image", "both", "image_to_image"],
+        )
+        self.assertEqual(
+            workflow_items["supported_modes"]["labels"],
+            ["仅文生图", "文生图 + 改图", "仅改图"],
+        )
+
     def test_workflow_node_binding_from_template_entry_falls_back_to_custom_text(self) -> None:
         node_binding = WorkflowNodeBinding.from_template_entry(
             {
@@ -770,6 +857,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(workflow_config.workflow_type, "comfyui")
         self.assertEqual(workflow_config.kind, "workflow")
         self.assertEqual(workflow_config.send_strategy, FOLLOW_GLOBAL)
+        self.assertEqual(workflow_config.supported_modes, ["text_to_image"])
 
     def test_from_template_entry_falls_back_to_display_name_as_workflow_id(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
@@ -784,6 +872,46 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
     def test_from_template_entry_falls_back_to_comfyui_for_unknown_workflow_type(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry({"workflow_type": "unknown-engine"})
         self.assertEqual(workflow_config.workflow_type, "comfyui")
+
+    def test_from_template_entry_reads_supported_modes_for_dual_entry_workflow(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "dual-entry",
+                "supported_modes": ["text_to_image", "image_to_image", "invalid-mode"],
+            }
+        )
+
+        self.assertTrue(workflow_config.supports_mode("text_to_image"))
+        self.assertTrue(workflow_config.supports_mode("image_to_image"))
+        self.assertEqual(workflow_config.supported_modes, ["text_to_image", "image_to_image"])
+
+    def test_from_template_entry_reads_supported_modes_for_image_to_image_only_workflow(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "img2img-only",
+                "supported_modes": "image_to_image",
+            }
+        )
+
+        self.assertFalse(workflow_config.supports_mode("text_to_image"))
+        self.assertTrue(workflow_config.supports_mode("image_to_image"))
+        self.assertEqual(workflow_config.supported_modes, ["image_to_image"])
+
+    def test_workflow_node_binding_reads_mode_switch_values(self) -> None:
+        node_binding = WorkflowNodeBinding.from_template_entry(
+            {
+                "workflow_id": "dual-entry",
+                "node_id": "31",
+                "field_path": "inputs.latent_image",
+                "binding_type": "mode_switch_json",
+                "text_to_image_value": "[\"23\", 0]",
+                "image_to_image_value": "[\"225\", 0]",
+            }
+        )
+
+        self.assertEqual(node_binding.binding_type, "mode_switch_json")
+        self.assertEqual(node_binding.text_to_image_value, "[\"23\", 0]")
+        self.assertEqual(node_binding.image_to_image_value, "[\"225\", 0]")
 
     def test_parsed_workflow_content_raises_generation_error_on_invalid_json(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
@@ -965,14 +1093,194 @@ class WorkflowMergeRegressionTests(unittest.TestCase):
 
         self.assertEqual(merged_payload["10"]["inputs"]["image"], "placeholder.png")
 
+    def test_merge_mode_switch_number_uses_request_mode(self) -> None:
+        workflow_config = self.build_workflow_config({"31": {"inputs": {"denoise": 1.0}}})
+
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="31",
+                field_path="inputs.denoise",
+                binding_type="mode_switch_number",
+                text_to_image_value="1.0",
+                image_to_image_value="0.45",
+            )
+        ]
+
+        text_to_image_payload = merge_workflow_payload(
+            workflow_config,
+            node_bindings,
+            mode="text_to_image",
+            positive_prompt="unused",
+        )
+        image_to_image_payload = merge_workflow_payload(
+            workflow_config,
+            node_bindings,
+            mode="image_to_image",
+            positive_prompt="unused",
+        )
+
+        self.assertEqual(text_to_image_payload["31"]["inputs"]["denoise"], 1.0)
+        self.assertEqual(image_to_image_payload["31"]["inputs"]["denoise"], 0.45)
+
+    def test_merge_mode_switch_json_can_rewire_comfyui_links(self) -> None:
+        workflow_config = self.build_workflow_config({"31": {"inputs": {"latent_image": ["23", 0]}}})
+
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="portrait_flux",
+                node_id="31",
+                field_path="inputs.latent_image",
+                binding_type="mode_switch_json",
+                text_to_image_value="[\"23\", 0]",
+                image_to_image_value="[\"225\", 0]",
+            )
+        ]
+
+        merged_payload = merge_workflow_payload(
+            workflow_config,
+            node_bindings,
+            mode="image_to_image",
+            positive_prompt="unused",
+        )
+
+        self.assertEqual(merged_payload["31"]["inputs"]["latent_image"], ["225", 0])
+
+
+class ComfyUIWorkflowRunnerRegressionTests(unittest.IsolatedAsyncioTestCase):
+    class FakeResponse:
+        def __init__(self, *, status: int = 200, json_data: Any = None, body: bytes = b""):
+            self.status = status
+            self._json_data = json_data
+            self._body = body
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def json(self, content_type=None):
+            return self._json_data
+
+        async def read(self):
+            return self._body
+
+    class FakeSession:
+        def __init__(self):
+            self.posts: list[tuple[str, dict[str, Any]]] = []
+            self.gets: list[tuple[str, dict[str, Any]]] = []
+
+        def post(self, url: str, **kwargs):
+            self.posts.append((url, kwargs))
+            if url.endswith("/upload/image"):
+                return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(
+                    json_data={"name": "uploaded.png"}
+                )
+            if url.endswith("/prompt"):
+                return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(
+                    json_data={"prompt_id": "prompt-123"}
+                )
+            return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(status=404, json_data={})
+
+        def get(self, url: str, **kwargs):
+            self.gets.append((url, kwargs))
+            if "/history/" in url:
+                return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(
+                    json_data={
+                        "prompt-123": {
+                            "outputs": {
+                                "save": {
+                                    "images": [
+                                        {"filename": "out.png", "subfolder": "", "type": "output"}
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                )
+            if url.endswith("/view"):
+                return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(body=b"image-bytes")
+            return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(status=404, json_data={})
+
+    def build_workflow_config(self, supported_modes: list[str] | None = None) -> WorkflowConfig:
+        workflow_payload = {
+            "23": {"inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
+            "31": {"inputs": {"latent_image": ["23", 0], "denoise": 1.0}},
+            "222": {"inputs": {"image": "placeholder.png"}},
+            "225": {"inputs": {"pixels": ["222", 0], "vae": ["51", 2]}},
+            "51": {"inputs": {}},
+        }
+        return WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "dual-entry",
+                "display_name": "Dual Entry Workflow",
+                "supported_modes": supported_modes or ["text_to_image", "image_to_image"],
+                "workflow_content": json.dumps(workflow_payload),
+            }
+        )
+
+    async def test_generate_image_to_image_uploads_image_and_rewires_dual_entry_workflow(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        session = self.FakeSession()
+        workflow_config = self.build_workflow_config()
+        node_bindings = [
+            WorkflowNodeBinding(
+                workflow_id="dual-entry",
+                node_id="222",
+                field_path="inputs.image",
+                binding_type="image_input",
+            ),
+            WorkflowNodeBinding(
+                workflow_id="dual-entry",
+                node_id="31",
+                field_path="inputs.latent_image",
+                binding_type="mode_switch_json",
+                text_to_image_value="[\"23\", 0]",
+                image_to_image_value="[\"225\", 0]",
+            ),
+            WorkflowNodeBinding(
+                workflow_id="dual-entry",
+                node_id="31",
+                field_path="inputs.denoise",
+                binding_type="mode_switch_number",
+                text_to_image_value="1.0",
+                image_to_image_value="0.45",
+            ),
+        ]
+
+        paths = await runner.generate_image_to_image(
+            "test",
+            ["data:image/png;base64,aGVsbG8="],
+            workflow_config,
+            node_bindings,
+            WorkflowRuntimeConfig(),
+            Path("."),
+            session,
+        )
+
+        self.assertEqual(len(paths), 1)
+        prompt_posts = [kwargs for url, kwargs in session.posts if url.endswith("/prompt")]
+        self.assertEqual(len(prompt_posts), 1)
+        prompt_payload = prompt_posts[0]["json"]["prompt"]
+        self.assertEqual(prompt_payload["222"]["inputs"]["image"], "uploaded.png")
+        self.assertEqual(prompt_payload["31"]["inputs"]["latent_image"], ["225", 0])
+        self.assertEqual(prompt_payload["31"]["inputs"]["denoise"], 0.45)
 
 class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
-    def build_workflow(self, display_name: str, *, priority: int = 0) -> WorkflowConfig:
+    def build_workflow(
+        self,
+        display_name: str,
+        *,
+        priority: int = 0,
+        supported_modes: list[str] | None = None,
+    ) -> WorkflowConfig:
         return WorkflowConfig.from_template_entry(
             {
                 "workflow_id": display_name.lower(),
                 "display_name": display_name,
                 "priority": priority,
+                "supported_modes": supported_modes or ["text_to_image"],
                 "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
             }
         )
@@ -1036,7 +1344,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(target_name, "HighPriorityWorkflow")
         self.assertEqual(paths, [Path("workflow_generated.png")])
 
-    async def test_workflow_target_is_skipped_for_image_to_image_requests(self) -> None:
+    async def test_workflow_target_reports_mode_mismatch_for_image_to_image_requests(self) -> None:
         workflow_only = self.build_workflow("OnlyWorkflow", priority=10)
         counter = FakeCounter()
         service = GenerationService(
@@ -1056,6 +1364,79 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
                 await service.generate(mode="image_to_image", prompt="测试", input_images=["stub-image"])
 
         self.assertIn("暂不支持改图", str(raised_error.exception))
+
+    async def test_image_to_image_only_workflow_reports_mode_mismatch_for_text_to_image_requests(self) -> None:
+        workflow_only = self.build_workflow(
+            "ImageOnlyWorkflow",
+            priority=10,
+            supported_modes=["image_to_image"],
+        )
+        counter = FakeCounter()
+        service = GenerationService(
+            [workflow_only],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+            FakeClientSession,
+        ):
+            with self.assertRaises(GenerationError) as raised_error:
+                await service.generate(mode="text_to_image", prompt="测试")
+
+        self.assertIn("暂不支持文生图", str(raised_error.exception))
+
+    async def test_dual_entry_workflow_handles_image_to_image_requests(self) -> None:
+        workflow_only = self.build_workflow(
+            "DualEntryWorkflow",
+            priority=10,
+            supported_modes=["text_to_image", "image_to_image"],
+        )
+        counter = FakeCounter()
+        service = GenerationService(
+            [workflow_only],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        async def fake_generate_image_to_image(
+            _runner,
+            prompt,
+            input_images,
+            workflow_config,
+            node_bindings,
+            runtime_config,
+            output_dir,
+            session,
+        ):
+            self.assertEqual(input_images, ["stub-image"])
+            return [Path("workflow_img2img.png")]
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.ComfyUIWorkflowRunner.generate_image_to_image",
+                fake_generate_image_to_image,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, target_name, _effective_send_strategy = await service.generate(
+                mode="image_to_image",
+                prompt="test",
+                input_images=["stub-image"],
+            )
+
+        self.assertEqual(target_name, "DualEntryWorkflow")
+        self.assertEqual(paths, [Path("workflow_img2img.png")])
 
     async def test_workflow_falls_back_to_next_model_on_failure(self) -> None:
         failing_workflow = self.build_workflow("FailingWorkflow", priority=10)
