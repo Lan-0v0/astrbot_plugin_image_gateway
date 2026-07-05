@@ -349,12 +349,6 @@
             "type": "string",
             "default": "ComfyUI"
           },
-          "workflow_id": {
-            "description": "工作流 ID",
-            "hint": "用于关联下方“工作流自定义节点条目”。建议使用稳定、唯一的英文或拼音标识，例如 portrait_flux",
-            "type": "string",
-            "default": "comfyui_workflow"
-          },
           "display_name": {
             "description": "显示名称",
             "type": "string",
@@ -435,6 +429,95 @@
             "type": "text",
             "default": ""
           },
+          "workflow_variable_bindings": {
+            "description": "工作流自定义节点条目",
+            "hint": "它是用来告诉插件：工作流里的哪个节点、哪个字段，应该被什么内容自动替换。你可以把它理解成“工作流参数替换规则列表”",
+            "type": "template_list",
+            "templates": {
+              "binding": {
+                "name": "自定义节点条目",
+                "display_item": "display_name",
+                "items": {
+                  "display_name": {
+                    "description": "显示名称",
+                    "hint": "给这条规则起一个你自己容易识别的名字，例如“正向提示词节点”“反向提示词节点”“CFG 参数节点”",
+                    "type": "string",
+                    "default": "节点覆盖规则"
+                  },
+                  "node_id": {
+                    "description": "节点 ID",
+                    "hint": "就是工作流 JSON 里最外层那串节点编号。例如最外层如果有一个编号 6 的节点，那这里就填 6。你只需要照着导出的 API JSON 里最外层的编号填写即可",
+                    "type": "string",
+                    "default": ""
+                  },
+                  "field_path": {
+                    "description": "字段路径",
+                    "hint": "用点号一步一步定位到你想修改的那一项。最常见的是 inputs.text，表示“这个节点里的 inputs 下面的 text”。如果某一项是列表里的第 1 个元素，就像 inputs.texts.0 这样写，最后的 0 表示第一个位置",
+                    "type": "string",
+                    "default": "inputs.text"
+                  },
+                  "binding_type": {
+                    "description": "内容类型",
+                    "hint": "选择这条规则要往节点里写入什么类型的内容。选“正向提示词”时内容来自 /生图 /改图 指令；选“图像输入”时表示把 /改图 的输入图片传给该节点",
+                    "type": "string",
+                    "default": "prompt_positive",
+                    "options": [
+                      "prompt_positive",
+                      "prompt_negative",
+                      "image_input",
+                      "seed",
+                      "custom_text",
+                      "custom_number"
+                    ],
+                    "labels": [
+                      "正向提示词",
+                      "反向提示词",
+                      "图片输入",
+                      "随机种子",
+                      "自定义文本",
+                      "自定义数值"
+                    ]
+                  },
+                  "prompt_negative_value": {
+                    "description": "输入内容",
+                    "hint": "这里填写你想固定写入工作流的反向提示词文本",
+                    "type": "string",
+                    "default": "",
+                    "condition": {
+                      "binding_type": "prompt_negative"
+                    }
+                  },
+                  "custom_text_value": {
+                    "description": "输入内容",
+                    "hint": "这里填写任意你想覆盖进去的文本内容",
+                    "type": "string",
+                    "default": "",
+                    "condition": {
+                      "binding_type": "custom_text"
+                    }
+                  },
+                  "seed_value": {
+                    "description": "输入内容",
+                    "hint": "这里填写固定随机种子；留空则每次自动随机生成一个整数",
+                    "type": "string",
+                    "default": "",
+                    "condition": {
+                      "binding_type": "seed"
+                    }
+                  },
+                  "custom_number_value": {
+                    "description": "输入内容",
+                    "hint": "这里填写数字，例如 7、20、0.35。含小数点会按浮点数处理，否则按整数处理",
+                    "type": "string",
+                    "default": "",
+                    "condition": {
+                      "binding_type": "custom_number"
+                    }
+                  }
+                }
+              }
+            }
+          },
           "send_strategy": {
             "description": "发送链路",
             "hint": "跟随全局表示使用最底部的「全局发送链路」配置；也可为该工作流单独指定",
@@ -456,118 +539,6 @@
               "平台客户端优先",
               "仅结果管道"
             ]
-          }
-        }
-      }
-    }
-  },
-  "workflow_node_bindings": {
-    "description": "工作流自定义节点条目",
-    "hint": "它是用来告诉插件：工作流里的哪个节点、哪个字段，应该被什么内容自动替换。你可以把它理解成“工作流参数替换规则列表”",
-    "type": "template_list",
-    "templates": {
-      "binding": {
-        "name": "自定义节点条目",
-        "display_item": "display_name",
-        "items": {
-          "display_name": {
-            "description": "显示名称",
-            "hint": "给这条规则起一个你自己容易识别的名字，例如“正向提示词节点”“反向提示词节点”“CFG 参数节点”",
-            "type": "string",
-            "default": "节点覆盖规则"
-          },
-          "workflow_id": {
-            "description": "所属工作流 ID",
-            "hint": "必须与上方某个工作流条目的“工作流 ID”完全一致",
-            "type": "string",
-            "default": "comfyui_workflow"
-          },
-          "node_id": {
-            "description": "节点 ID",
-            "hint": "就是工作流 JSON 里最外层那串节点编号。例如最外层如果有一个编号 6 的节点，那这里就填 6。你只需要照着导出的 API JSON 里最外层的编号填写即可",
-            "type": "string",
-            "default": ""
-          },
-          "field_path": {
-            "description": "字段路径",
-            "hint": "用点号一步一步定位到你想修改的那一项。最常见的是 inputs.text，表示“这个节点里的 inputs 下面的 text”。如果某一项是列表里的第 1 个元素，就像 inputs.texts.0 这样写，最后的 0 表示第一个位置",
-            "type": "string",
-            "default": "inputs.text"
-          },
-          "binding_type": {
-            "description": "内容类型",
-            "type": "string",
-            "default": "prompt_positive",
-            "options": [
-              "prompt_positive",
-              "prompt_negative",
-              "image_input",
-              "seed",
-              "custom_text",
-              "custom_number"
-            ],
-            "labels": [
-              "正向提示词",
-              "反向提示词",
-              "图片输入",
-              "随机种子",
-              "自定义文本",
-              "自定义数值"
-            ]
-          },
-          "prompt_negative_value": {
-            "description": "输入内容",
-            "hint": "这里填写你想固定写入工作流的反向提示词文本",
-            "type": "string",
-            "default": "",
-            "condition": {
-              "binding_type": "prompt_negative"
-            }
-          },
-          "custom_text_value": {
-            "description": "输入内容",
-            "hint": "这里填写任意你想覆盖进去的文本内容",
-            "type": "string",
-            "default": "",
-            "condition": {
-              "binding_type": "custom_text"
-            }
-          },
-          "seed_value": {
-            "description": "输入内容",
-            "hint": "这里填写固定随机种子；留空则每次自动随机生成一个整数",
-            "type": "string",
-            "default": "",
-            "condition": {
-              "binding_type": "seed"
-            }
-          },
-          "custom_number_value": {
-            "description": "输入内容",
-            "hint": "这里填写数字，例如 7、20、0.35。含小数点会按浮点数处理，否则按整数处理",
-            "type": "string",
-            "default": "",
-            "condition": {
-              "binding_type": "custom_number"
-            }
-          },
-          "prompt_positive_help": {
-            "description": "正向提示词提示",
-            "hint": "此项应通过 /生图 /改图 指令输入",
-            "type": "string",
-            "default": "",
-            "condition": {
-              "binding_type": "prompt_positive"
-            }
-          },
-          "image_input_help": {
-            "description": "图像输入提示",
-            "hint": "此项为 /改图 指令的专用，用于图像的传输",
-            "type": "string",
-            "default": "",
-            "condition": {
-              "binding_type": "image_input"
-            }
           }
         }
       }

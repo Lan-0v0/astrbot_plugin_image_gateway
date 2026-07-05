@@ -100,20 +100,20 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `priority` | 仅当 `priority_preset=custom` 时使用的自定义优先级数值 |
 | `retry_count` | 重试次数，`-1` 表示使用全局默认 |
 | `max_generation_count` | 单次请求最大生成张数，`-1` 表示使用全局默认 |
-| `workflow_id` | 工作流唯一标识，用于关联下方的工作流自定义节点条目 |
 | `workflow_type` | 工作流类型，当前仅支持 `comfyui` |
 | `runtime_base_url_override` | 覆盖 ComfyUI 地址；留空则使用全局默认 |
 | `runtime_api_key_override` | 覆盖 ComfyUI 鉴权 Token；留空则使用全局默认 |
 | `workflow_content` | **必须**是从 ComfyUI 点击“导出（API 格式）”得到的完整 JSON |
+| `workflow_variable_bindings` | 工作流自定义节点条目（见下文） |
 | `send_strategy` | 该工作流的发送链路，默认 `follow_global` |
 
-#### 工作流自定义节点条目（`workflow_node_bindings`）
+#### 工作流自定义节点条目（`workflow_variable_bindings`）
 
-这里就是你在配置面板里看到的“自定义节点条目”。它现在已经从工作流条目内部拆出来，变成单独的顶层列表。你可以一条一条新增规则，用 **“工作流 ID + 节点 ID + 字段路径”** 精确定位某个 workflow 的字段，再根据你选择的内容类型，用输入内容去覆盖该字段原有值；最终合并后的 workflow 才会被提交执行。
+这里就是你在配置面板里看到的“自定义节点条目”。它是用来告诉插件：**工作流里的哪个节点、哪个字段，应该被什么内容自动替换**。你可以把它理解成“工作流参数替换规则列表”。每个工作流条目内部都可以单独新增多条规则，用 **“节点 ID + 字段路径”** 精确定位该工作流 JSON 中的字段，再根据你选择的内容类型，用输入内容去覆盖原值；最终合并后的 workflow 才会被提交执行。
 
 | 字段 | 说明 |
 |------|------|
-| `workflow_id` | 该条规则属于哪个工作流，必须与某个工作流条目的 `workflow_id` 完全一致 |
+| `display_name` | 这条规则自己的显示名称，例如“正向提示词节点”“反向提示词节点”“CFG 参数节点” |
 | `node_id` | 对应 `workflow_content` 中该节点的 Key（例如 ComfyUI 导出 JSON 里的 `"6"`） |
 | `field_path` | 点路径，例如 `inputs.text` 或 `inputs.texts.0`（支持列表下标） |
 | `binding_type` | 内容类型（见下表） |
@@ -137,7 +137,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 
 ```json
 {
-  "workflow_id": "portrait_flux",
+  "display_name": "正向提示词节点",
   "node_id": "6",
   "field_path": "inputs.text",
   "binding_type": "prompt_positive"
@@ -146,7 +146,7 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 
 你也可以把它理解成：
 
-- `workflow_id`：这条规则属于哪个工作流
+- `display_name`：这条规则叫什么，方便你以后识别
 - `node_id`：改哪一个节点
 - `field_path`：改这个节点里的哪一项
 - `binding_type`：这项内容是什么类型

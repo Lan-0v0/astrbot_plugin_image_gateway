@@ -9,7 +9,7 @@ import aiohttp
 
 from ..adapters.base import GenerationError
 from ..utils.storage import save_binary_image
-from .workflow_config import WorkflowConfig, WorkflowNodeBinding, WorkflowRuntimeConfig
+from .workflow_config import WorkflowConfig, WorkflowRuntimeConfig
 from .workflow_merge import merge_workflow_payload
 
 
@@ -21,14 +21,12 @@ class ComfyUIWorkflowRunner:
         prompt: str,
         count: int,
         workflow_config: WorkflowConfig,
-        node_bindings: list[WorkflowNodeBinding],
         runtime_config: WorkflowRuntimeConfig,
         output_dir: Path,
         session: aiohttp.ClientSession,
     ) -> list[Path]:
         payload = merge_workflow_payload(
             workflow_config,
-            node_bindings,
             positive_prompt=prompt,
             input_images=None,
         )
