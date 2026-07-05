@@ -53,15 +53,43 @@ class WorkflowNodeBinding:
         elif binding_type == "custom_number":
             custom_value = str(entry.get("custom_number_value") or custom_value)
 
+        text_to_image_value = str(entry.get("text_to_image_value") or "").strip()
+        image_to_image_value = str(entry.get("image_to_image_value") or "").strip()
+        if binding_type.startswith("mode_switch_"):
+            text_to_image_value = _resolve_mode_switch_entry_value(
+                entry,
+                suffix="text_to_image_value",
+                binding_type=binding_type,
+                fallback=text_to_image_value,
+            )
+            image_to_image_value = _resolve_mode_switch_entry_value(
+                entry,
+                suffix="image_to_image_value",
+                binding_type=binding_type,
+                fallback=image_to_image_value,
+            )
+
         return cls(
             workflow_id=str(entry.get("workflow_id") or "").strip(),
             node_id=str(entry.get("node_id") or "").strip(),
             field_path=str(entry.get("field_path") or "").strip(),
             binding_type=binding_type,
             custom_value=custom_value,
-            text_to_image_value=str(entry.get("text_to_image_value") or "").strip(),
-            image_to_image_value=str(entry.get("image_to_image_value") or "").strip(),
+            text_to_image_value=text_to_image_value,
+            image_to_image_value=image_to_image_value,
         )
+
+
+def _resolve_mode_switch_entry_value(
+    entry: dict[str, Any],
+    *,
+    suffix: str,
+    binding_type: str,
+    fallback: str,
+) -> str:
+    type_specific_key = f"{binding_type}_{suffix}"
+    type_specific_value = str(entry.get(type_specific_key) or "").strip()
+    return type_specific_value or fallback
 
 
 @dataclass

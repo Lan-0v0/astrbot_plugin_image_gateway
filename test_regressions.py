@@ -842,8 +842,17 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertIn("正向提示词", binding_type["hint"])
         self.assertIn("/生图 /改图", binding_type["hint"])
         self.assertIn("图片输入", binding_type["hint"])
+        self.assertIn("双模式工作流", binding_type["hint"])
+        self.assertIn("模式切换数值", binding_type["hint"])
+        self.assertIn("模式切换 JSON", binding_type["hint"])
         self.assertNotIn("prompt_positive_help", binding_items)
         self.assertNotIn("image_input_help", binding_items)
+
+    def test_conf_schema_describes_workflow_binding_as_dual_locator_rules(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        bindings_section = schema["workflow_node_bindings"]
+        self.assertIn("节点ID+字段路径双重定位", bindings_section["hint"])
 
     def test_conf_schema_uses_select_options_for_workflow_type_and_supported_modes(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -904,6 +913,38 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(runtime_timeout_default, 300)
         self.assertEqual(runtime_config.timeout_seconds, 300)
         self.assertEqual(runtime_config.base_url, "http://127.0.0.1:8188")
+
+    def test_conf_schema_exposes_mode_switch_fields_with_direct_conditions(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        binding_items = schema["workflow_node_bindings"]["templates"]["binding"]["items"]
+
+        self.assertTrue(binding_items["text_to_image_value"]["invisible"])
+        self.assertTrue(binding_items["image_to_image_value"]["invisible"])
+        self.assertEqual(
+            binding_items["mode_switch_text_text_to_image_value"]["condition"],
+            {"binding_type": "mode_switch_text"},
+        )
+        self.assertEqual(
+            binding_items["mode_switch_text_image_to_image_value"]["condition"],
+            {"binding_type": "mode_switch_text"},
+        )
+        self.assertEqual(
+            binding_items["mode_switch_number_text_to_image_value"]["condition"],
+            {"binding_type": "mode_switch_number"},
+        )
+        self.assertEqual(
+            binding_items["mode_switch_number_image_to_image_value"]["condition"],
+            {"binding_type": "mode_switch_number"},
+        )
+        self.assertEqual(
+            binding_items["mode_switch_json_text_to_image_value"]["condition"],
+            {"binding_type": "mode_switch_json"},
+        )
+        self.assertEqual(
+            binding_items["mode_switch_json_image_to_image_value"]["condition"],
+            {"binding_type": "mode_switch_json"},
+        )
 
     def test_workflow_node_binding_from_template_entry_falls_back_to_custom_text(self) -> None:
         node_binding = WorkflowNodeBinding.from_template_entry(
@@ -985,6 +1026,22 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(node_binding.binding_type, "mode_switch_json")
         self.assertEqual(node_binding.text_to_image_value, "[\"23\", 0]")
         self.assertEqual(node_binding.image_to_image_value, "[\"225\", 0]")
+
+    def test_workflow_node_binding_reads_type_specific_mode_switch_fields(self) -> None:
+        node_binding = WorkflowNodeBinding.from_template_entry(
+            {
+                "workflow_id": "dual-entry",
+                "node_id": "206",
+                "field_path": "inputs.denoise",
+                "binding_type": "mode_switch_number",
+                "mode_switch_number_text_to_image_value": "1.0",
+                "mode_switch_number_image_to_image_value": "0.45",
+            }
+        )
+
+        self.assertEqual(node_binding.binding_type, "mode_switch_number")
+        self.assertEqual(node_binding.text_to_image_value, "1.0")
+        self.assertEqual(node_binding.image_to_image_value, "0.45")
 
     def test_parsed_workflow_content_raises_generation_error_on_invalid_json(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
