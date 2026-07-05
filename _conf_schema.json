@@ -340,12 +340,12 @@
             "default": ""
           },
           "workflow_variable_bindings": {
-            "description": "节点绑定列表",
-            "hint": "用「节点ID + 字段路径」精确定位并覆盖 workflow_content 中的对应值；字段路径使用点号，如 inputs.text 或 inputs.texts.0",
+            "description": "自定义节点条目",
+            "hint": "新增一条节点覆盖规则。你可以通过 节点ID + 字段路径 精确定位 workflow_content 中的字段，再用下方选择的内容类型和值去覆盖它",
             "type": "template_list",
             "templates": {
               "binding": {
-                "name": "节点绑定",
+                "name": "自定义节点条目",
                 "display_item": "node_id",
                 "items": {
                   "node_id": {
@@ -361,7 +361,7 @@
                     "default": "inputs.text"
                   },
                   "binding_type": {
-                    "description": "绑定类型",
+                    "description": "内容类型",
                     "type": "string",
                     "default": "prompt_positive",
                     "options": [
@@ -382,8 +382,8 @@
                     ]
                   },
                   "custom_value": {
-                    "description": "自定义值",
-                    "hint": "反向提示词、自定义文本请填写文本；随机种子留空则每次随机；自定义数值请填写数字（含小数点则按浮点数处理）",
+                    "description": "输入内容",
+                    "hint": "正向提示词会自动使用 /生图 的提示词；反向提示词/任意文本请直接填写文本；随机种子留空则每次随机；任意数值请填写数字（含小数点则按浮点数处理）",
                     "type": "string",
                     "default": ""
                   }

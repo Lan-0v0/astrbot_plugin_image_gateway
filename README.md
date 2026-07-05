@@ -100,19 +100,19 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
 | `runtime_base_url_override` | 覆盖 ComfyUI 地址；留空则使用全局默认 |
 | `runtime_api_key_override` | 覆盖 ComfyUI 鉴权 Token；留空则使用全局默认 |
 | `workflow_content` | **必须**是从 ComfyUI 点击“导出（API 格式）”得到的完整 JSON |
-| `workflow_variable_bindings` | 节点绑定列表（见下文） |
+| `workflow_variable_bindings` | 自定义节点条目（见下文） |
 | `send_strategy` | 该工作流的发送链路，默认 `follow_global` |
 
-#### 节点绑定（`workflow_variable_bindings`）
+#### 自定义节点条目（`workflow_variable_bindings`）
 
-每条绑定通过 **“节点 ID + 字段路径”** 精确定位 `workflow_content` 中的某个字段，并用配置值覆盖该字段原有内容；最终合并后的 workflow 才会被提交执行。
+这里就是你在配置面板里看到的“自定义节点条目”。你可以一条一条新增规则，用 **“节点 ID + 字段路径”** 精确定位 `workflow_content` 中的某个字段，再根据你选择的内容类型，用输入内容去覆盖该字段原有值；最终合并后的 workflow 才会被提交执行。
 
 | 字段 | 说明 |
 |------|------|
 | `node_id` | 对应 `workflow_content` 中该节点的 Key（例如 ComfyUI 导出 JSON 里的 `"6"`） |
 | `field_path` | 点路径，例如 `inputs.text` 或 `inputs.texts.0`（支持列表下标） |
-| `binding_type` | 绑定类型（见下表） |
-| `custom_value` | 部分绑定类型需要填写的自定义值 |
+| `binding_type` | 内容类型（见下表） |
+| `custom_value` | 输入内容；部分类型会直接使用你这里填写的值 |
 
 `binding_type` 支持：
 
@@ -134,6 +134,13 @@ https://github.com/Lan-0v0/astrbot_plugin_image_gateway
   "binding_type": "prompt_positive"
 }
 ```
+
+你也可以把它理解成：
+
+- `node_id`：改哪一个节点
+- `field_path`：改这个节点里的哪一项
+- `binding_type`：这项内容是什么类型
+- `custom_value`：如果需要手动填值，就在这里填
 
 ### ComfyUI 运行环境（全局默认，`workflow_runtime_default`）
 

@@ -1,8 +1,8 @@
 name: astrbot_plugin_image_gateway
 display_name: 图像网关
-desc: 新增 Workflow（ComfyUI）支持与可配置发送链路，统一模型与工作流调度
+desc: 优化 Workflow 节点配置体验，完善配置面板与文档表达
 short_desc: OpenAI/Gemini/ComfyUI 多模型生图与改图网关
-version: 1.2.0
+version: 1.2.1
 author: AstrBot
 repo: "https://github.com/Lan-0v0/astrbot_plugin_image_gateway"
 astrbot_version: ">=4.9.2,<5"

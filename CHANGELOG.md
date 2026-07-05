@@ -1,3 +1,8 @@
+## v1.2.1
+
+- 优化 Workflow 配置面板文案与结构表达，使 `workflow_variable_bindings` 以更符合用户认知的“自定义节点条目”形式呈现
+- 优化 README 中关于 Workflow 节点配置的说明，补充更直观的字段解释与使用方式
+
 ## v1.2.0
 
 - 新增 Workflow（工作流）列表，第一版支持 ComfyUI 文生图工作流，与 OpenAI/Gemini 模型统一参与优先级调度、重试与张数上限控制
