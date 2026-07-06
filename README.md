@@ -4,6 +4,9 @@
 
 
 
+
+
+
 AstrBot 多模型图像生成网关插件。支持 OpenAI Images API 与 Google Gemini 图像接口，支持Wrokflow工作流如ComfyUI，可自定义baseURL、模型名称、显示名称、优先级、重试次数及审核力度。支持文生图、图生图两种模式，支持自然语言。
 
 ## 功能特性
