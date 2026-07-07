@@ -56,6 +56,8 @@ class ModelConfig:
     retry_count: int = -1
     max_generation_count: int = -1
     send_strategy: str = "follow_global"
+    fake_forward_mode: str = "follow_global"
+    fake_forward_custom_qq: str = ""
     kind: str = "model"
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -64,6 +66,7 @@ class ModelConfig:
         # Imported lazily to avoid a hard import-time dependency from the
         # adapters package onto the services package.
         from ..services.priority import resolve_priority_value
+        from ..services.fake_forward import normalize_custom_qq, parse_entry_fake_forward_mode
         from ..services.send_strategy import parse_entry_send_strategy
 
         template = str(
@@ -88,6 +91,8 @@ class ModelConfig:
             retry_count=int(entry.get("retry_count", -1)),
             max_generation_count=int(entry.get("max_generation_count", -1)),
             send_strategy=parse_entry_send_strategy(entry.get("send_strategy")),
+            fake_forward_mode=parse_entry_fake_forward_mode(entry.get("fake_forward_mode")),
+            fake_forward_custom_qq=normalize_custom_qq(entry.get("fake_forward_custom_qq")),
             raw=entry,
         )
 

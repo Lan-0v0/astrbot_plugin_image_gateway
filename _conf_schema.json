@@ -153,6 +153,35 @@
             "type": "string",
             "default": ""
           },
+          "fake_forward_mode": {
+            "description": "消息伪造转发",
+            "hint": "跟随全局表示使用下方「全局消息伪造转发」配置；开启后会在生成完成时合并转发开始提示与图片",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
+          },
+          "fake_forward_custom_qq": {
+            "description": "自定义QQ号",
+            "hint": "仅在消息伪造转发选择“自定义QQ号”时生效",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
+          },
           "send_strategy": {
             "description": "发送链路",
             "hint": "跟随全局表示使用最底部的「全局发送链路」配置；也可为该模型单独指定",
@@ -403,18 +432,6 @@
             "type": "int",
             "default": -1
           },
-          "workflow_type": {
-            "description": "类型",
-            "hint": "当前仅支持 ComfyUI",
-            "type": "string",
-            "default": "comfyui",
-            "options": [
-              "comfyui"
-            ],
-            "labels": [
-              "ComfyUI"
-            ]
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认仅文生图；如果该 workflow 按单工作流双入口设计，可选择“文生图 + 改图”；如果它只用于改图，也可以选择“仅改图”",
@@ -448,6 +465,35 @@
             "hint": "必须是从 ComfyUI 点击“导出（API 格式）”得到的完整 JSON，不要使用普通导出格式",
             "type": "text",
             "default": ""
+          },
+          "fake_forward_mode": {
+            "description": "消息伪造转发",
+            "hint": "跟随全局表示使用下方「全局消息伪造转发」配置；开启后会在生成完成时合并转发开始提示与图片",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
+          },
+          "fake_forward_custom_qq": {
+            "description": "自定义QQ号",
+            "hint": "仅在消息伪造转发选择“自定义QQ号”时生效",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
           },
           "send_strategy": {
             "description": "发送链路",
@@ -749,6 +795,39 @@
           "enabled": true,
           "mode": "llm",
           "llm_persona_source": "custom"
+        }
+      }
+    }
+  },
+  "fake_forward": {
+    "description": "全局消息伪造转发",
+    "hint": "关闭时不使用；开启后会在生成完成时合并转发开始提示与图片。该项主要面向 QQ 侧的合并转发展示",
+    "type": "object",
+    "items": {
+      "mode": {
+        "description": "伪造转发身份",
+        "type": "string",
+        "default": "off",
+        "options": [
+          "off",
+          "bot_self",
+          "requester",
+          "custom_qq"
+        ],
+        "labels": [
+          "关闭",
+          "Bot自身",
+          "生图要求者",
+          "自定义QQ号"
+        ]
+      },
+      "custom_qq": {
+        "description": "自定义QQ号",
+        "hint": "仅在伪造转发身份选择“自定义QQ号”时生效",
+        "type": "string",
+        "default": "",
+        "condition": {
+          "mode": "custom_qq"
         }
       }
     }

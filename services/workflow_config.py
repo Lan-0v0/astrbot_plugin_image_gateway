@@ -5,10 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..adapters.base import GenerationError
+from .fake_forward import normalize_custom_qq, parse_entry_fake_forward_mode
 from .priority import resolve_priority_value
 from .send_strategy import parse_entry_send_strategy
-
-SUPPORTED_WORKFLOW_TYPES = {"comfyui"}
 
 SUPPORTED_BINDING_TYPES = {
     "prompt_positive",
@@ -23,6 +22,7 @@ SUPPORTED_BINDING_TYPES = {
 }
 
 SUPPORTED_WORKFLOW_MODES = {"text_to_image", "image_to_image"}
+DEFAULT_WORKFLOW_ENGINE = "comfyui"
 
 
 @dataclass
@@ -126,13 +126,14 @@ class WorkflowConfig:
 
     workflow_id: str
     display_name: str
-    workflow_type: str
     workflow_content_raw: str
     priority: int = 0
     enabled: bool = True
     retry_count: int = -1
     max_generation_count: int = -1
     send_strategy: str = "follow_global"
+    fake_forward_mode: str = "follow_global"
+    fake_forward_custom_qq: str = ""
     runtime_base_url_override: str = ""
     runtime_api_key_override: str = ""
     supported_modes: list[str] = field(default_factory=lambda: ["text_to_image"])
@@ -141,10 +142,6 @@ class WorkflowConfig:
 
     @classmethod
     def from_template_entry(cls, entry: dict[str, Any]) -> WorkflowConfig:
-        workflow_type = str(entry.get("workflow_type") or "comfyui").strip().lower()
-        if workflow_type not in SUPPORTED_WORKFLOW_TYPES:
-            workflow_type = "comfyui"
-
         workflow_id = str(entry.get("workflow_id") or "").strip() or str(
             entry.get("display_name") or "未命名工作流"
         ).strip()
@@ -152,13 +149,14 @@ class WorkflowConfig:
         return cls(
             workflow_id=workflow_id,
             display_name=str(entry.get("display_name") or "未命名工作流"),
-            workflow_type=workflow_type,
             workflow_content_raw=str(entry.get("workflow_content") or ""),
             priority=resolve_priority_value(entry, default_priority=10),
             enabled=bool(entry.get("enabled", True)),
             retry_count=int(entry.get("retry_count", -1)),
             max_generation_count=int(entry.get("max_generation_count", -1)),
             send_strategy=parse_entry_send_strategy(entry.get("send_strategy")),
+            fake_forward_mode=parse_entry_fake_forward_mode(entry.get("fake_forward_mode")),
+            fake_forward_custom_qq=normalize_custom_qq(entry.get("fake_forward_custom_qq")),
             runtime_base_url_override=str(entry.get("runtime_base_url_override") or "").strip(),
             runtime_api_key_override=str(entry.get("runtime_api_key_override") or "").strip(),
             supported_modes=_normalize_supported_modes(entry.get("supported_modes")),
@@ -166,7 +164,7 @@ class WorkflowConfig:
         )
 
     def model_key(self) -> str:
-        return f"workflow|{self.workflow_type}|{self.workflow_id}|{self.display_name}"
+        return f"workflow|{DEFAULT_WORKFLOW_ENGINE}|{self.workflow_id}|{self.display_name}"
 
     def parsed_workflow_content(self) -> dict[str, Any]:
         try:

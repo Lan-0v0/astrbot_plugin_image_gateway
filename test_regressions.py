@@ -142,6 +142,14 @@ from astrbot_plugin_image_gateway.main import (  # noqa: E402
     ImageGatewayPlugin,
     StartMessageDispatchResult,
 )
+from astrbot_plugin_image_gateway.services.fake_forward import (  # noqa: E402
+    FOLLOW_GLOBAL as FAKE_FORWARD_FOLLOW_GLOBAL,
+    FakeForwardConfig,
+    FakeForwardMode,
+    parse_entry_fake_forward_mode,
+    parse_global_fake_forward,
+    resolve_effective_fake_forward,
+)
 from astrbot_plugin_image_gateway.services.generation import GenerationService  # noqa: E402
 from astrbot_plugin_image_gateway.services.send_strategy import (  # noqa: E402
     FOLLOW_GLOBAL,
@@ -194,6 +202,7 @@ class FakeEvent:
         *,
         group_id: str = "123456",
         sender_id: str = "654321",
+        sender_name: str = "Test User",
         platform_id: str = "test-platform",
         platform_name: str = "aiocqhttp",
     ):
@@ -201,6 +210,7 @@ class FakeEvent:
         self.unified_msg_origin = "test-origin"
         self._group_id = group_id
         self._sender_id = sender_id
+        self._sender_name = sender_name
         self._platform_id = platform_id
         self._platform_name = platform_name
 
@@ -215,6 +225,9 @@ class FakeEvent:
 
     def get_sender_id(self):
         return self._sender_id
+
+    def get_sender_name(self):
+        return self._sender_name
 
     def get_platform_id(self):
         return self._platform_id
@@ -349,7 +362,7 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
                 FakeClientSession,
             ),
         ):
-            paths, model_name, _effective_send_strategy = await service.generate(
+            paths, model_name, _effective_send_strategy, _effective_fake_forward = await service.generate(
                 mode="image_to_image", prompt="test prompt"
             )
 
@@ -410,7 +423,7 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
                         FakeClientSession,
                     ),
                 ):
-                    paths, provider_name, _effective_send_strategy = await service.generate(
+                    paths, provider_name, _effective_send_strategy, _effective_fake_forward = await service.generate(
                         mode="text_to_image",
                         prompt="test prompt",
                     )
@@ -418,6 +431,43 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(provider_name, expected_fallback_name)
                 self.assertEqual(paths, [Path(f"{expected_fallback_name}.png")])
                 self.assertEqual(attempted_providers, [failing_name, expected_fallback_name])
+
+    async def test_generate_resolves_effective_fake_forward_from_global_config(self) -> None:
+        model = self.build_model("Primary", priority=100)
+        model.fake_forward_mode = FAKE_FORWARD_FOLLOW_GLOBAL
+
+        service = GenerationService(
+            [model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+            global_fake_forward=FakeForwardConfig(mode=FakeForwardMode.REQUESTER.value),
+        )
+
+        successful_adapter = types.SimpleNamespace(
+            text_to_image=self.return_generated_path,
+            image_to_image=self.return_generated_path,
+        )
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=successful_adapter,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            _paths, _model_name, _effective_send_strategy, effective_fake_forward = await service.generate(
+                mode="text_to_image",
+                prompt="test prompt",
+            )
+
+        self.assertEqual(effective_fake_forward.mode, FakeForwardMode.REQUESTER.value)
+        self.assertEqual(effective_fake_forward.custom_qq, "")
 
     async def return_generated_path(self, *args, **kwargs):
         return [Path("generated.png")]
@@ -451,11 +501,47 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         )
         self.assertEqual(model_config.send_strategy, "event_send_first")
 
+    def test_model_config_fake_forward_defaults_to_follow_global(self) -> None:
+        model_config = ModelConfig.from_template_entry({"provider": "openai"})
+        self.assertEqual(model_config.fake_forward_mode, FAKE_FORWARD_FOLLOW_GLOBAL)
+        self.assertEqual(model_config.fake_forward_custom_qq, "")
+
+    def test_model_config_fake_forward_parses_explicit_value(self) -> None:
+        model_config = ModelConfig.from_template_entry(
+            {
+                "provider": "openai",
+                "fake_forward_mode": "custom_qq",
+                "fake_forward_custom_qq": "QQ: 123456abc",
+            }
+        )
+        self.assertEqual(model_config.fake_forward_mode, FakeForwardMode.CUSTOM_QQ.value)
+        self.assertEqual(model_config.fake_forward_custom_qq, "123456")
+
+    def test_model_config_fake_forward_defaults_to_follow_global(self) -> None:
+        model_config = ModelConfig.from_template_entry({"provider": "openai"})
+        self.assertEqual(model_config.fake_forward_mode, FAKE_FORWARD_FOLLOW_GLOBAL)
+        self.assertEqual(model_config.fake_forward_custom_qq, "")
+
+    def test_model_config_fake_forward_parses_explicit_value(self) -> None:
+        model_config = ModelConfig.from_template_entry(
+            {
+                "provider": "openai",
+                "fake_forward_mode": "custom_qq",
+                "fake_forward_custom_qq": " QQ: 123456abc ",
+            }
+        )
+        self.assertEqual(model_config.fake_forward_mode, FakeForwardMode.CUSTOM_QQ.value)
+        self.assertEqual(model_config.fake_forward_custom_qq, "123456")
+
     def test_generation_service_from_config_uses_new_global_defaults(self) -> None:
         generation_service = GenerationService.from_config({}, Path("."), FakeCounter())
         self.assertEqual(generation_service.global_retry_count, 2)
         self.assertEqual(generation_service.global_max_generation_count, 2)
         self.assertEqual(generation_service.global_send_strategy, SendStrategy.DIRECT_FIRST)
+        self.assertEqual(generation_service.global_fake_forward.mode, FakeForwardMode.OFF.value)
+        self.assertEqual(generation_service.global_fake_forward.custom_qq, "")
+        self.assertEqual(generation_service.global_fake_forward.mode, FakeForwardMode.OFF.value)
+        self.assertEqual(generation_service.global_fake_forward.custom_qq, "")
 
     def test_load_start_message_config_uses_default_custom_persona_prompt(self) -> None:
         plugin_instance = object.__new__(ImageGatewayPlugin)
@@ -493,6 +579,11 @@ class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("开始提示不应在超限前发送")
 
         plugin_instance._send_start_message = fail_if_called
+        plugin_instance.generation_service.validate_request_count = (
+            lambda requested_count, mode="text_to_image": (_ for _ in ()).throw(
+                GenerationError("超出生成张数上限")
+            )
+        )
 
         results = []
         async for result in plugin_instance._run_generation(
@@ -514,6 +605,46 @@ class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
         message_text = await plugin_instance._build_generation_start_message(FakeEvent("/生图 测试"), "生图")
 
         self.assertEqual(message_text, "")
+
+
+    async def test_run_generation_passes_request_mode_to_validate_request_count(self) -> None:
+        observed_modes: list[str] = []
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance._refresh_services = lambda: None
+        plugin_instance.generation_service = types.SimpleNamespace(
+            _normalize_requested_count=lambda mode, count: 1,
+            validate_request_count=lambda requested_count, mode="text_to_image": observed_modes.append(mode),
+            generate=self._raise_generation_error("stop after validation"),
+        )
+        async def start_message_result(event, label):
+            return StartMessageDispatchResult(text="开始生成", message_id="1", sent_passively=False)
+
+        async def noop_retract_start_message(event, message_id):
+            return None
+
+        plugin_instance._send_start_message = start_message_result
+        plugin_instance._retract_start_message = noop_retract_start_message
+
+        results = []
+        async for result in plugin_instance._run_generation(
+            FakeEvent("/改图 测试"),
+            mode="image_to_image",
+            prompt="测试",
+            count=1,
+            input_images=["stub-image"],
+            success_label="改图",
+        ):
+            results.append(result)
+
+        self.assertEqual(results, ["stop after validation"])
+        self.assertEqual(observed_modes, ["image_to_image"])
+
+    @staticmethod
+    def _raise_generation_error(message: str):
+        async def generate(**kwargs):
+            raise GenerationError(message)
+
+        return generate
 
 
 class ImageDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -615,6 +746,9 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
         plugin_instance._build_image_component = build_image_component
         plugin_instance._send_start_message = self._build_start_message_result
         plugin_instance._retract_start_message = retract_start_message
+        plugin_instance.generation_service.validate_request_count = (
+            lambda requested_count, mode="text_to_image": None
+        )
 
         event = FakeEvent("/改图 测试")
         event.sent_messages = []
@@ -670,6 +804,9 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
         plugin_instance._build_image_component = build_image_component
         plugin_instance._send_start_message = self._build_passive_start_message_result
         plugin_instance._retract_start_message = retract_start_message
+        plugin_instance.generation_service.validate_request_count = (
+            lambda requested_count, mode="text_to_image": None
+        )
 
         event = FakeEvent("/改图 测试")
         event.sent_messages = []
@@ -702,10 +839,35 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def _build_passive_start_message_result(event, label):
         return StartMessageDispatchResult(text="开始生成", sent_passively=True)
 
+    async def test_build_fake_forward_chain_uses_requester_identity(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.context = types.SimpleNamespace(get_config=lambda: {})
+
+        async def build_image_component(image_path: str):
+            return f"image:{image_path}"
+
+        plugin_instance._build_image_component = build_image_component
+
+        event = FakeEvent("/生图 测试", sender_id="24680", sender_name="Requester")
+        chain = await plugin_instance._build_fake_forward_chain(
+            event,
+            "开始生成",
+            ["generated.png"],
+            FakeForwardConfig(mode=FakeForwardMode.REQUESTER.value),
+        )
+
+        self.assertEqual(len(chain), 1)
+        nodes = chain[0].nodes
+        self.assertEqual(len(nodes), 2)
+        self.assertEqual(nodes[0].uin, "24680")
+        self.assertEqual(nodes[0].name, "Requester")
+        self.assertEqual(nodes[0].content[0].text, "开始生成")
+        self.assertEqual(nodes[1].content[-1], "image:generated.png")
+
     @staticmethod
     def _build_generate_result(paths: list[Path]):
         async def generate(**kwargs):
-            return paths, "Test Model", SendStrategy.DIRECT_FIRST
+            return paths, "Test Model", SendStrategy.DIRECT_FIRST, FakeForwardConfig()
 
         return generate
 
@@ -826,6 +988,49 @@ class SendStrategyRegressionTests(unittest.TestCase):
         self.assertEqual(get_sender_order(SendStrategy.RESULT_PIPELINE_ONLY), [])
 
 
+class FakeForwardRegressionTests(unittest.TestCase):
+    def test_parse_global_fake_forward_defaults_to_off(self) -> None:
+        config = parse_global_fake_forward(None)
+        self.assertEqual(config.mode, FakeForwardMode.OFF.value)
+        self.assertEqual(config.custom_qq, "")
+        self.assertEqual(config.enabled, False)
+
+    def test_parse_global_fake_forward_custom_qq_normalizes_digits(self) -> None:
+        config = parse_global_fake_forward({"mode": "custom_qq", "custom_qq": "QQ 12a34b56"})
+        self.assertEqual(config.mode, FakeForwardMode.CUSTOM_QQ.value)
+        self.assertEqual(config.custom_qq, "123456")
+        self.assertEqual(config.enabled, True)
+
+    def test_parse_entry_fake_forward_mode_defaults_to_follow_global(self) -> None:
+        self.assertEqual(parse_entry_fake_forward_mode(None), FAKE_FORWARD_FOLLOW_GLOBAL)
+        self.assertEqual(parse_entry_fake_forward_mode(""), FAKE_FORWARD_FOLLOW_GLOBAL)
+        self.assertEqual(parse_entry_fake_forward_mode("not-a-real-mode"), FAKE_FORWARD_FOLLOW_GLOBAL)
+
+    def test_resolve_effective_fake_forward_follows_global(self) -> None:
+        effective_config = resolve_effective_fake_forward(
+            global_config=FakeForwardConfig(
+                mode=FakeForwardMode.REQUESTER.value,
+                custom_qq="",
+            ),
+            entry_mode=FAKE_FORWARD_FOLLOW_GLOBAL,
+            entry_custom_qq="",
+        )
+        self.assertEqual(effective_config.mode, FakeForwardMode.REQUESTER.value)
+        self.assertEqual(effective_config.custom_qq, "")
+
+    def test_resolve_effective_fake_forward_requires_custom_qq_value(self) -> None:
+        effective_config = resolve_effective_fake_forward(
+            global_config=FakeForwardConfig(
+                mode=FakeForwardMode.BOT_SELF.value,
+                custom_qq="",
+            ),
+            entry_mode=FakeForwardMode.CUSTOM_QQ.value,
+            entry_custom_qq="",
+        )
+        self.assertEqual(effective_config.mode, FakeForwardMode.OFF.value)
+        self.assertEqual(effective_config.custom_qq, "")
+
+
 class WorkflowConfigRegressionTests(unittest.TestCase):
     def test_conf_schema_uses_provider_names_for_model_templates(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -854,7 +1059,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         bindings_section = schema["workflow_node_bindings"]
         self.assertIn("节点ID+字段路径双重定位", bindings_section["hint"])
 
-    def test_conf_schema_uses_select_options_for_workflow_type_and_supported_modes(self) -> None:
+    def helper_conf_schema_removes_workflow_type_and_keeps_supported_modes(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
         workflow_items = schema["workflows"]["templates"]["comfyui"]["items"]
@@ -870,6 +1075,43 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(
             workflow_items["supported_modes"]["labels"],
             ["仅文生图", "文生图 + 改图", "仅改图"],
+        )
+
+    def test_conf_schema_removes_workflow_type_and_keeps_supported_modes_v134(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        workflow_items = schema["workflows"]["templates"]["comfyui"]["items"]
+
+        self.assertNotIn("workflow_type_label", workflow_items)
+        self.assertNotIn("workflow_type", workflow_items)
+        self.assertEqual(
+            workflow_items["supported_modes"]["options"],
+            ["text_to_image", "both", "image_to_image"],
+        )
+
+    def test_conf_schema_exposes_fake_forward_options_for_models_and_workflows(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        model_items = schema["models"]["templates"]["openai"]["items"]
+        workflow_items = schema["workflows"]["templates"]["comfyui"]["items"]
+        global_items = schema["fake_forward"]["items"]
+
+        self.assertEqual(global_items["mode"]["options"], ["off", "bot_self", "requester", "custom_qq"])
+        self.assertEqual(
+            model_items["fake_forward_mode"]["options"],
+            ["follow_global", "off", "bot_self", "requester", "custom_qq"],
+        )
+        self.assertEqual(
+            workflow_items["fake_forward_mode"]["options"],
+            ["follow_global", "off", "bot_self", "requester", "custom_qq"],
+        )
+        self.assertEqual(
+            model_items["fake_forward_custom_qq"]["condition"],
+            {"fake_forward_mode": "custom_qq"},
+        )
+        self.assertEqual(
+            workflow_items["fake_forward_custom_qq"]["condition"],
+            {"fake_forward_mode": "custom_qq"},
         )
 
     def test_conf_schema_documents_priority_preset_numeric_values(self) -> None:
@@ -958,7 +1200,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(node_binding.workflow_id, "portrait_flux")
         self.assertEqual(node_binding.binding_type, "custom_text")
 
-    def test_from_template_entry_parses_bindings_and_defaults(self) -> None:
+    def helper_from_template_entry_parses_bindings_and_defaults(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
             {
                 "workflow_id": "portrait_flux",
@@ -973,6 +1215,24 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(workflow_config.send_strategy, FOLLOW_GLOBAL)
         self.assertEqual(workflow_config.supported_modes, ["text_to_image"])
 
+    def test_from_template_entry_parses_bindings_defaults_and_fake_forward(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "portrait_flux",
+                "display_name": "My ComfyUI Workflow",
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+                "fake_forward_mode": "custom_qq",
+                "fake_forward_custom_qq": "qq: 778899",
+            }
+        )
+
+        self.assertEqual(workflow_config.workflow_id, "portrait_flux")
+        self.assertEqual(workflow_config.kind, "workflow")
+        self.assertEqual(workflow_config.send_strategy, FOLLOW_GLOBAL)
+        self.assertEqual(workflow_config.fake_forward_mode, FakeForwardMode.CUSTOM_QQ.value)
+        self.assertEqual(workflow_config.fake_forward_custom_qq, "778899")
+        self.assertEqual(workflow_config.supported_modes, ["text_to_image"])
+
     def test_from_template_entry_falls_back_to_display_name_as_workflow_id(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
             {
@@ -983,7 +1243,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
 
         self.assertEqual(workflow_config.workflow_id, "默认工作流ID")
 
-    def test_from_template_entry_falls_back_to_comfyui_for_unknown_workflow_type(self) -> None:
+    def helper_from_template_entry_falls_back_to_comfyui_for_unknown_workflow_type(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry({"workflow_type": "unknown-engine"})
         self.assertEqual(workflow_config.workflow_type, "comfyui")
 
@@ -1474,7 +1734,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
                 FakeClientSession,
             ),
         ):
-            paths, target_name, _effective_send_strategy = await service.generate(
+            paths, target_name, _effective_send_strategy, _effective_fake_forward = await service.generate(
                 mode="text_to_image", prompt="测试"
             )
 
@@ -1559,7 +1819,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
                 FakeClientSession,
             ),
         ):
-            paths, target_name, _effective_send_strategy = await service.generate(
+            paths, target_name, _effective_send_strategy, _effective_fake_forward = await service.generate(
                 mode="text_to_image",
                 prompt="测试",
                 count=2,
@@ -1607,7 +1867,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
                 FakeClientSession,
             ),
         ):
-            paths, target_name, _effective_send_strategy = await service.generate(
+            paths, target_name, _effective_send_strategy, _effective_fake_forward = await service.generate(
                 mode="image_to_image",
                 prompt="test",
                 input_images=["stub-image"],
@@ -1667,7 +1927,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
                 FakeClientSession,
             ),
         ):
-            paths, target_name, _effective_send_strategy = await service.generate(
+            paths, target_name, _effective_send_strategy, _effective_fake_forward = await service.generate(
                 mode="text_to_image", prompt="测试"
             )
 

@@ -1,4 +1,4 @@
-# <img width="256" height="256" alt="logo" src="https://github.com/user-attachments/assets/ecca05e0-2f75-4b1f-b208-7a73d4b9847e"  />astrbot\_plugin\_image\_gateway
+# ![logo](logo.png) astrbot\_plugin\_image\_gateway
 
 
 AstrBot 多模型图像生成网关插件。支持 OpenAI Images API 与 Google Gemini 图像接口，支持Wrokflow工作流如ComfyUI，可自定义baseURL、模型名称、显示名称、优先级、重试次数及审核力度。支持文生图、图生图两种模式，支持自然语言。
@@ -14,6 +14,7 @@ AstrBot 多模型图像生成网关插件。支持 OpenAI Images API 与 Google 
 * **张数上限控制**：可限制单次请求的最大生成张数，避免一次请求生成过多图片
 * **审核力度可调**：OpenAI / Gemini 均支持将审核设为 `none`，并自动尝试多种降级策略
 * **可配置发送链路**：全局与单条目均可指定消息发送优先方式，降低复杂插件环境下的干扰
+* **消息伪造转发**：支持按全局或单条目配置，在生成完成后将开始提示与图片合并转发，并可伪装为 Bot、自身请求者或自定义 QQ 号
 * **灵活发送**：若 AstrBot 配置了 `callback\_api\_base`，优先以 URL 发送图片；失败时回退本地文件
 
 ## 先看这里：ComfyUI 同时支持文生图和图生图
@@ -84,7 +85,7 @@ AstrBot 多模型图像生成网关插件。支持 OpenAI Images API 与 Google 
 
 在 `workflows` 里新增一个 ComfyUI 工作流，并确认：
 
-* `类型` 下拉项当前选择 `ComfyUI`
+* 直接新增 `ComfyUI` 工作流模板条目
 * `workflow\_content` 填的是 **ComfyUI 导出的 API 格式 JSON**
 * `supported\_modes` 设为 `both`
 * `workflow\_id` 自己起一个稳定、不重复的值
@@ -292,6 +293,8 @@ https://github.com/Lan-0v0/astrbot\_plugin\_image\_gateway
 |`quality` / `size`|画质与尺寸（默认画质为 `high`，部分网关可能忽略）|
 |`moderation`|内容审核 / 安全过滤等级（见下文）|
 |`seed`|随机种子，留空表示随机（部分模型不支持）|
+|`fake\_forward\_mode`|消息伪造转发。默认 `follow\_global`；可选关闭、Bot自身、生图要求者、自定义QQ号|
+|`fake\_forward\_custom\_qq`|仅当 `fake\_forward\_mode=custom\_qq` 时显示，填写自定义 QQ 号|
 |`send\_strategy`|该模型的发送链路，默认 `follow\_global`（见下文「发送链路」）|
 
 ### 工作流（Workflow）列表（`workflows`）
@@ -311,11 +314,12 @@ https://github.com/Lan-0v0/astrbot\_plugin\_image\_gateway
 |`retry\_count`|重试次数，`-1` 表示使用全局默认|
 |`max\_generation\_count`|单次请求最大生成张数，`-1` 表示使用全局默认|
 |`workflow\_id`|工作流唯一标识，用于关联下方的工作流自定义节点条目|
-|`workflow\_type`|类型下拉项，当前仅支持 `ComfyUI`；代码内部对应 `comfyui`|
 |`supported\_modes`|工作流支持的模式。可选“仅文生图”“文生图 + 改图”“仅改图”；默认仅 `text\_to\_image`|
 |`runtime\_base\_url\_override`|覆盖 ComfyUI 地址；留空则使用全局默认|
 |`runtime\_api\_key\_override`|覆盖 ComfyUI 鉴权 Token；留空则使用全局默认|
 |`workflow\_content`|**必须**是从 ComfyUI 点击“导出（API 格式）”得到的完整 JSON|
+|`fake\_forward\_mode`|消息伪造转发。默认 `follow\_global`；可选关闭、Bot自身、生图要求者、自定义QQ号|
+|`fake\_forward\_custom\_qq`|仅当 `fake\_forward\_mode=custom\_qq` 时显示，填写自定义 QQ 号|
 |`send\_strategy`|该工作流的发送链路，默认 `follow\_global`|
 
 #### 工作流自定义节点条目（`workflow\_node\_bindings`）
@@ -403,6 +407,26 @@ https://github.com/Lan-0v0/astrbot\_plugin\_image\_gateway
 |`llm\_provider\_id`|LLM 提示语使用的提供商；留空则跟随当前默认配置|`''`|
 |`llm\_persona\_source`|LLM 提示语使用的人设来源。`current` 为当前人设，`custom` 为自定义人设提示词|`current`|
 |`llm\_custom\_persona\_prompt`|自定义人设提示词，仅在 `llm\_persona\_source=custom` 时生效|`根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式，10字以内，结尾不加标点符号换成颜文字表情，严禁使用emoji。`|
+
+### 全局消息伪造转发（`fake\_forward`）
+
+位于配置面板中的「生图开始提示」和「全局发送链路」之间。关闭时不启用；开启后，会在生成完成时把“开始提示”和图片合并成一条转发消息发送出去，主要面向 QQ 侧的合并转发展示。
+
+配置项如下：
+
+|配置项|说明|默认值|
+|-|-|-|
+|`mode`|伪造转发身份。可选 `off` / `bot\_self` / `requester` / `custom\_qq`|`off`|
+|`custom\_qq`|仅在 `mode=custom\_qq` 时显示，填写你希望用于转发显示的 QQ 号|`''`|
+
+说明：
+
+* `off`：关闭消息伪造转发
+* `bot\_self`：尽量使用 Bot 自身 QQ 和昵称作为转发节点身份
+* `requester`：使用发起本次 `/生图` 或 `/改图` 请求的用户身份
+* `custom\_qq`：使用你填写的 QQ 号；若能获取昵称则显示昵称，否则回退显示 QQ 号
+
+每个模型 / 工作流条目都可以单独设置 `fake\_forward\_mode`；默认值为 `follow\_global`，表示跟随本节的全局配置。
 
 ### 审核力度（`moderation`）
 

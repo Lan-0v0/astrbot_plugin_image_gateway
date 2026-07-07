@@ -10,6 +10,7 @@ from astrbot.api import logger
 
 from ..adapters import GenerationError, ModelConfig, SensitiveContentError, get_adapter
 from .counter import GenerationCounter
+from .fake_forward import FakeForwardConfig, parse_global_fake_forward, resolve_effective_fake_forward
 from .send_strategy import (
     DEFAULT_GLOBAL_SEND_STRATEGY,
     SendStrategy,
@@ -37,6 +38,7 @@ class GenerationService:
         output_dir: Path,
         counter: GenerationCounter,
         global_send_strategy: SendStrategy = DEFAULT_GLOBAL_SEND_STRATEGY,
+        global_fake_forward: FakeForwardConfig | None = None,
         workflow_runtime_default: WorkflowRuntimeConfig | None = None,
     ):
         self.targets = targets
@@ -46,6 +48,7 @@ class GenerationService:
         self.output_dir = output_dir
         self.counter = counter
         self.global_send_strategy = global_send_strategy
+        self.global_fake_forward = global_fake_forward or FakeForwardConfig()
         self.workflow_runtime_default = workflow_runtime_default or WorkflowRuntimeConfig()
         self._workflow_runner = ComfyUIWorkflowRunner()
 
@@ -82,6 +85,7 @@ class GenerationService:
             output_dir=output_dir,
             counter=counter,
             global_send_strategy=parse_global_send_strategy(config.get("send_strategy")),
+            global_fake_forward=parse_global_fake_forward(config.get("fake_forward")),
             workflow_runtime_default=WorkflowRuntimeConfig.from_raw(config.get("workflow_runtime_default")),
         )
 
@@ -92,7 +96,7 @@ class GenerationService:
         prompt: str,
         count: int = 1,
         input_images: list[str] | None = None,
-    ) -> tuple[list[Path], str, SendStrategy]:
+    ) -> tuple[list[Path], str, SendStrategy, FakeForwardConfig]:
         requested_count = self._normalize_requested_count(mode, count)
         self.validate_request_count(requested_count, mode=mode)
 
@@ -140,7 +144,12 @@ class GenerationService:
                                 global_strategy=self.global_send_strategy,
                                 entry_strategy=target.send_strategy,
                             )
-                            return paths, target.display_name, effective_send_strategy
+                            effective_fake_forward = resolve_effective_fake_forward(
+                                global_config=self.global_fake_forward,
+                                entry_mode=target.fake_forward_mode,
+                                entry_custom_qq=target.fake_forward_custom_qq,
+                            )
+                            return paths, target.display_name, effective_send_strategy, effective_fake_forward
                     except SensitiveContentError as exc:
                         had_sensitive = True
                         msg = f"{target.display_name}: {exc}"

@@ -15,6 +15,7 @@ from astrbot.core.message.message_event_result import MessageChain
 
 from .adapters import GenerationError
 from .services.counter import GenerationCounter
+from .services.fake_forward import FakeForwardConfig, FakeForwardMode, parse_global_fake_forward
 from .services.generation import GenerationService
 from .services.send_strategy import SendStrategy, get_sender_order, parse_global_send_strategy
 from .utils.messages import collect_input_images, parse_command_text, parse_count_and_prompt
@@ -51,7 +52,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/ComfyUI Workflow、优先级回退与自然语言触发",
-    "1.3.3",
+    "1.3.4",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -71,6 +72,7 @@ class ImageGatewayPlugin(Star):
         )
         self.enable_nl_trigger = bool(self.plugin_config.get("enable_nl_trigger", True))
         self.global_send_strategy = parse_global_send_strategy(self.plugin_config.get("send_strategy"))
+        self.global_fake_forward = parse_global_fake_forward(self.plugin_config.get("fake_forward"))
         self.start_message_config = self._load_start_message_config(
             self.plugin_config.get("generation_start_message")
         )
@@ -191,6 +193,53 @@ class ImageGatewayPlugin(Star):
 
         return [Comp.Nodes(nodes=nodes)], single_image_chains
 
+    async def _build_fake_forward_chain(
+        self,
+        event: AstrMessageEvent,
+        start_message_text: str,
+        image_paths: list[str],
+        fake_forward_config: FakeForwardConfig,
+    ) -> list[Any]:
+        sender_uin, sender_name = await self._resolve_fake_forward_sender_identity(
+            event,
+            fake_forward_config,
+        )
+
+        if not sender_uin:
+            return []
+
+        nodes: list[Comp.Node] = []
+        if start_message_text:
+            nodes.append(
+                Comp.Node(
+                    uin=sender_uin,
+                    name=sender_name,
+                    content=[Comp.Plain(start_message_text)],
+                )
+            )
+
+        image_components: list[Image] = []
+        for image_path in image_paths:
+            image_components.append(await self._build_image_component(image_path))
+
+        for index, image_component in enumerate(image_components, start=1):
+            content: list[Any] = []
+            if len(image_components) > 1:
+                content.append(Comp.Plain(f"图片 {index}/{len(image_components)}"))
+            content.append(image_component)
+            nodes.append(
+                Comp.Node(
+                    uin=sender_uin,
+                    name=sender_name,
+                    content=content,
+                )
+            )
+
+        if not nodes:
+            return []
+
+        return [Comp.Nodes(nodes=nodes)]
+
     async def _send_message_chain_directly(
         self,
         event: AstrMessageEvent,
@@ -275,6 +324,13 @@ class ImageGatewayPlugin(Star):
         if client is None or not hasattr(client, "call_action"):
             return False
 
+        if (
+            len(chain_components) == 1
+            and isinstance(chain_components[0], Comp.Nodes)
+            and await self._try_send_via_platform_client_forward_nodes(event, chain_components[0])
+        ):
+            return True
+
         segments: list[dict[str, Any]] = []
         for component in chain_components:
             segment = await self._build_platform_message_segment(component)
@@ -304,6 +360,76 @@ class ImageGatewayPlugin(Star):
             return True
         except Exception as exc:
             logger.warning(f"平台客户端直接发送失败: {exc}")
+            return False
+
+    async def _try_send_via_platform_client_forward_nodes(
+        self,
+        event: AstrMessageEvent,
+        nodes_component: Any,
+    ) -> bool:
+        get_platform_inst = getattr(self.context, "get_platform_inst", None)
+        if not callable(get_platform_inst):
+            return False
+
+        platform = get_platform_inst(event.get_platform_id())
+        if platform is None:
+            return False
+
+        try:
+            client = platform.get_client()
+        except Exception as exc:
+            logger.warning(f"获取平台客户端失败，无法通过客户端直接发送合并转发: {exc}")
+            return False
+
+        if client is None or not hasattr(client, "call_action"):
+            return False
+
+        nodes = list(getattr(nodes_component, "nodes", []) or [])
+        if not nodes:
+            return False
+
+        payload_nodes: list[dict[str, Any]] = []
+        for node in nodes:
+            content_segments: list[dict[str, Any]] = []
+            for component in list(getattr(node, "content", []) or []):
+                segment = await self._build_platform_message_segment(component)
+                if segment is None:
+                    logger.debug("合并转发节点中存在平台客户端不支持的片段，放弃该链路")
+                    return False
+                content_segments.append(segment)
+
+            payload_nodes.append(
+                {
+                    "type": "node",
+                    "data": {
+                        "uin": str(getattr(node, "uin", "") or ""),
+                        "name": str(getattr(node, "name", "") or "Bot"),
+                        "content": content_segments,
+                    },
+                }
+            )
+
+        session_id = event.get_group_id() or event.get_sender_id()
+        if not session_id or not str(session_id).isdigit():
+            return False
+
+        try:
+            if event.get_group_id():
+                await client.call_action(
+                    "send_group_forward_msg",
+                    group_id=int(session_id),
+                    messages=payload_nodes,
+                )
+            else:
+                await client.call_action(
+                    "send_private_forward_msg",
+                    user_id=int(session_id),
+                    messages=payload_nodes,
+                )
+            logger.debug("合并转发消息已通过平台客户端直接发送")
+            return True
+        except Exception as exc:
+            logger.warning(f"平台客户端直接发送合并转发失败: {exc}")
             return False
 
     async def _build_platform_message_segment(self, component: Any) -> dict[str, Any] | None:
@@ -410,6 +536,36 @@ class ImageGatewayPlugin(Star):
             logger.warning(f"平台客户端直接发送文本失败，回退结果管道: {exc}")
             return False, None
 
+    async def _send_fake_forward_result(
+        self,
+        event: AstrMessageEvent,
+        start_message_text: str,
+        image_paths: list[str],
+        *,
+        fake_forward_config: FakeForwardConfig,
+        send_strategy: SendStrategy,
+    ):
+        merged_chain = await self._build_fake_forward_chain(
+            event,
+            start_message_text,
+            image_paths,
+            fake_forward_config,
+        )
+        if not merged_chain:
+            async for result in self._send_generated_images(
+                event,
+                image_paths,
+                send_strategy=send_strategy,
+            ):
+                yield result
+            return
+
+        sender_order = get_sender_order(send_strategy)
+        if await self._send_message_chain_directly(event, merged_chain, sender_order=sender_order):
+            return
+
+        yield event.chain_result(merged_chain)
+
     async def _build_image_component(self, image_path: str) -> Image:
         callback_api_base = self.context.get_config().get("callback_api_base")
         if not callback_api_base:
@@ -436,7 +592,7 @@ class ImageGatewayPlugin(Star):
 
         try:
             requested_count = self.generation_service._normalize_requested_count(mode, count)
-            self.generation_service.validate_request_count(requested_count)
+            self.generation_service.validate_request_count(requested_count, mode=mode)
         except GenerationError as exc:
             yield event.plain_result(str(exc))
             return
@@ -456,11 +612,13 @@ class ImageGatewayPlugin(Star):
         started = time.time()
 
         try:
-            paths, _model_name, effective_send_strategy = await self.generation_service.generate(
+            paths, _model_name, effective_send_strategy, effective_fake_forward = (
+                await self.generation_service.generate(
                 mode=mode,
                 prompt=prompt,
                 count=count,
                 input_images=input_images,
+                )
             )
         except GenerationError as exc:
             await self._retract_start_message(event, start_message.message_id)
@@ -484,11 +642,24 @@ class ImageGatewayPlugin(Star):
 
         if not success_message_sent_directly:
             yield event.plain_result(success_message_text)
+            if not effective_fake_forward.enabled:
+                return
+
+        image_paths = [str(path) for path in paths]
+        if effective_fake_forward.enabled:
+            async for result in self._send_fake_forward_result(
+                event,
+                start_message.text,
+                image_paths,
+                fake_forward_config=effective_fake_forward,
+                send_strategy=effective_send_strategy,
+            ):
+                yield result
             return
 
         async for result in self._send_generated_images(
             event,
-            [str(path) for path in paths],
+            image_paths,
             send_strategy=effective_send_strategy,
         ):
             yield result
@@ -691,6 +862,91 @@ class ImageGatewayPlugin(Star):
         cleaned_text = cleaned_text.strip("`\"'“”‘’")
         cleaned_text = re.sub(r"^[：:—\-]+", "", cleaned_text).strip()
         return cleaned_text
+
+    async def _resolve_fake_forward_sender_identity(
+        self,
+        event: AstrMessageEvent,
+        fake_forward_config: FakeForwardConfig,
+    ) -> tuple[str, str]:
+        mode = fake_forward_config.mode
+
+        if mode == FakeForwardMode.REQUESTER.value:
+            requester_uin = str(event.get_sender_id() or "").strip()
+            requester_name = self._get_event_sender_name(event) or requester_uin or "用户"
+            return requester_uin, requester_name
+
+        if mode == FakeForwardMode.CUSTOM_QQ.value:
+            custom_qq = str(fake_forward_config.custom_qq or "").strip()
+            if not custom_qq:
+                return "", ""
+            custom_name = await self._resolve_qq_nickname(event, custom_qq)
+            return custom_qq, custom_name or custom_qq
+
+        if mode == FakeForwardMode.BOT_SELF.value:
+            bot_uin, bot_name = await self._resolve_bot_identity(event)
+            return bot_uin, bot_name
+
+        return "", ""
+
+    @staticmethod
+    def _get_event_sender_name(event: AstrMessageEvent) -> str:
+        get_sender_name = getattr(event, "get_sender_name", None)
+        if callable(get_sender_name):
+            try:
+                sender_name = str(get_sender_name() or "").strip()
+                if sender_name:
+                    return sender_name
+            except Exception:
+                return ""
+        return ""
+
+    async def _resolve_bot_identity(self, event: AstrMessageEvent) -> tuple[str, str]:
+        client = self._get_platform_client(event)
+        if client is not None:
+            try:
+                response = await client.call_action("get_login_info")
+                if isinstance(response, dict):
+                    data = response.get("data") if isinstance(response.get("data"), dict) else response
+                    user_id = str(data.get("user_id") or "").strip()
+                    nickname = str(data.get("nickname") or "").strip()
+                    if user_id:
+                        return user_id, nickname or "Bot"
+            except Exception as exc:
+                logger.warning(f"获取 Bot 自身身份信息失败，回退默认名称: {exc}")
+
+        return "", "Bot"
+
+    async def _resolve_qq_nickname(self, event: AstrMessageEvent, qq: str) -> str:
+        client = self._get_platform_client(event)
+        if client is None or not qq:
+            return ""
+
+        try:
+            response = await client.call_action("get_stranger_info", user_id=int(qq), no_cache=True)
+            if isinstance(response, dict):
+                data = response.get("data") if isinstance(response.get("data"), dict) else response
+                nickname = str(data.get("nickname") or "").strip()
+                if nickname:
+                    return nickname
+        except Exception as exc:
+            logger.warning(f"获取自定义 QQ 昵称失败，回退使用 QQ 号: {exc}")
+
+        return ""
+
+    def _get_platform_client(self, event: AstrMessageEvent) -> Any | None:
+        get_platform_inst = getattr(self.context, "get_platform_inst", None)
+        if not callable(get_platform_inst):
+            return None
+
+        platform = get_platform_inst(event.get_platform_id())
+        if platform is None:
+            return None
+
+        try:
+            return platform.get_client()
+        except Exception as exc:
+            logger.warning(f"获取平台客户端失败: {exc}")
+            return None
 
     @staticmethod
     def _extract_message_id(response: Any) -> str | None:
