@@ -1256,7 +1256,10 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(workflow_template["display_item"], ["workflow_id"])
         self.assertTrue(workflow_template["hide_hint_in_list"])
         self.assertNotIn("display_name", workflow_items)
-        self.assertIn("显示名称：工作流 ID (workflow_id)输入框中输入的内容变量", workflow_template["hint"])
+        self.assertEqual(
+            workflow_template["hint"],
+            "需要粘贴 ComfyUI 使用“导出（API 格式）”得到的完整工作流 JSON。",
+        )
         self.assertEqual(
             workflow_items["workflow_id"]["hint"],
             "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
