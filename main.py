@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import random
 import re
 import time
@@ -53,14 +54,54 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/ComfyUI Workflow、优先级回退与自然语言触发",
-    "1.3.10",
+    "1.4.1",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
+        self.config = config
         self.plugin_config: dict = dict(config or {})
+        self._normalize_plugin_config()
         self._last_image_cache_cleanup_at = 0.0
         self._refresh_services()
+
+    def _normalize_plugin_config(self) -> None:
+        changed = False
+        raw_bindings = self.plugin_config.get("workflow_node_bindings")
+        if isinstance(raw_bindings, list):
+            for entry in raw_bindings:
+                if not isinstance(entry, dict):
+                    continue
+                display_summary = self._build_workflow_binding_display_summary(entry)
+                if entry.get("display_summary") != display_summary:
+                    entry["display_summary"] = display_summary
+                    changed = True
+
+        if changed:
+            self._persist_plugin_config()
+
+    @staticmethod
+    def _build_workflow_binding_display_summary(entry: dict[str, Any]) -> str:
+        display_name = str(entry.get("display_name") or "").strip()
+        workflow_id = str(entry.get("workflow_id") or "").strip()
+
+        if display_name and workflow_id:
+            return f"{display_name}——{workflow_id}"
+        if display_name:
+            return display_name
+        if workflow_id:
+            return workflow_id
+        return ""
+
+    def _persist_plugin_config(self) -> None:
+        save_config = getattr(self.config, "save_config", None)
+        if callable(save_config):
+            save_config(replace_config=self.plugin_config)
+            return
+
+        if isinstance(self.config, dict):
+            self.config.clear()
+            self.config.update(self.plugin_config)
 
     def _refresh_services(self) -> None:
         data_dir = StarTools.get_data_dir(PLUGIN_NAME)

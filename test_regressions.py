@@ -62,7 +62,15 @@ def install_astrbot_test_stubs() -> None:
             self.chain = chain or []
 
     class DummyAstrBotConfig(dict):
-        pass
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.saved_config: dict[str, Any] | None = None
+
+        def save_config(self, replace_config=None, *, indent=2):
+            if replace_config is not None:
+                self.clear()
+                self.update(replace_config)
+            self.saved_config = json.loads(json.dumps(self))
 
     class DummyAstrMessageEvent:
         pass
@@ -1253,20 +1261,48 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
         )
 
-    def test_conf_schema_uses_composite_binding_display_item_and_restores_display_name_hint(self) -> None:
+    def test_conf_schema_uses_plugin_managed_binding_display_summary(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
         binding_template = schema["workflow_node_bindings"]["templates"]["binding"]
         binding_items = binding_template["items"]
 
-        self.assertEqual(
-            binding_template["display_item"],
-            ["display_name", "workflow_id"],
+        self.assertEqual(binding_template["display_item"], ["display_summary"])
+        self.assertTrue(binding_items["display_summary"]["invisible"])
+        self.assertIn("CFG", binding_items["display_name"]["hint"])
+
+    def test_plugin_normalizes_binding_display_summary_and_persists_config(self) -> None:
+        config_cls = sys.modules["astrbot.api"].AstrBotConfig
+        config = config_cls(
+            {
+                "workflow_node_bindings": [
+                    {
+                        "__template_key": "binding",
+                        "display_name": "?????",
+                        "workflow_id": "miaomiao??",
+                        "node_id": "85",
+                        "field_path": "inputs.text",
+                        "binding_type": "prompt_positive",
+                    }
+                ]
+            }
         )
-        self.assertEqual(binding_template["display_item_separator"], "——")
+
+        context_cls = sys.modules["astrbot.api.star"].Context
+        plugin = ImageGatewayPlugin(context_cls(), config)
+
+        binding_entry = plugin.plugin_config["workflow_node_bindings"][0]
+        expected_summary = plugin._build_workflow_binding_display_summary(
+            {
+                "display_name": "?????",
+                "workflow_id": "miaomiao??",
+            }
+        )
+        self.assertEqual(binding_entry["display_summary"], expected_summary)
+        self.assertIsNotNone(config.saved_config)
         self.assertEqual(
-            binding_items["display_name"]["hint"],
-            "给这条规则起一个你自己容易识别的名字，例如“正向提示词节点”“反向提示词节点”“CFG 参数节点”",
+            config.saved_config["workflow_node_bindings"][0]["display_summary"],
+            expected_summary,
         )
 
     def test_conf_schema_exposes_fake_forward_options_for_models_and_workflows(self) -> None:

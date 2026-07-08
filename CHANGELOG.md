@@ -1,3 +1,9 @@
+## v1.4.1
+
+- 将“工作流自定义节点条目”的副标题显示逻辑收敛到插件端自身维护：插件现在会自动生成并持久化 `display_summary`，确保列表稳定显示 `display_name——workflow_id`
+- 更新 `_conf_schema.json`，直接使用 `display_summary` 作为展示字段，不再依赖 AstrBot dashboard 对本插件做特殊兼容分支
+- 补充对应回归测试并重新完成完整单元测试验证，当前 `test_regressions.py` 共 96 项测试通过
+
 ## v1.3.10
 
 - 重修 AstrBot 配置面板中“工作流自定义节点条目”的副标题显示逻辑：当旧条目缺失 `__template_key`、或前端临时拿不到模板元数据时，现在会先按条目自身的 `display_name——workflow_id` 直接组合显示，不再整块空白
