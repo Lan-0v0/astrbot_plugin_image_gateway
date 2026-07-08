@@ -650,15 +650,6 @@ astrbot\_plugin\_image\_gateway/
 * 将 ComfyUI 模板介绍文案改为 `工作流 ID (workflow_id)输入框中输入的内容变量`，移除 `hide_hint_in_list` 设置，使介绍文案正常展示，不再与条目值混排成 `miaomiao文生图——工作流 ID (workflow_id)输入框输入的内容变量` 这类异常显示
 * 此前 v1.4.3/v1.4.4 使用数组形式 `display_item` 并配合 `hide_hint_in_list` 隐藏提示文案，但 AstrBot 配置面板对数组形式 `display_item` 的渲染会将字段描述拼入副标题，导致显示异常；改为字符串形式后该问题彻底消除
 
-## v1.4.5 补充说明
-
-### 工作流条目介绍方式对齐 OpenAI/Gemini
-
-* 参考"图像生成模型列表"中 OpenAI/Gemini 条目的介绍方式，将"工作流（Workflow）列表"中 ComfyUI 条目的 `display_item` 从数组形式改为字符串形式
-* 现在工作流条目副标题只会显示 `workflow_id` 的实际内容，例如在"工作流 ID (workflow_id)"中输入 `文生图1`，列表里就只显示 `文生图1`
-* 之前数组形式会导致 AstrBot 配置面板把字段说明文字和条目值拼在一起，出现"miaomiao文生图——工作流 ID (workflow_id)输入框输入的内容变量"这类混淆显示
-* 同时移除了 `hide_hint_in_list`，模板介绍文案改为 `工作流 ID (workflow_id)输入框中输入的内容变量`，与 OpenAI/Gemini 的介绍方式保持一致
-
 ## v1.4.4 补充说明
 
 ### 工作流条目副标题最终修正
