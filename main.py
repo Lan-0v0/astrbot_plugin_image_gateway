@@ -53,7 +53,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/ComfyUI Workflow、优先级回退与自然语言触发",
-    "1.3.6",
+    "1.3.7",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -569,7 +569,7 @@ class ImageGatewayPlugin(Star):
     async def _send_fake_forward_result(
         self,
         event: AstrMessageEvent,
-        start_message_text: str,
+        summary_text: str,
         image_paths: list[str],
         *,
         fake_forward_config: FakeForwardConfig,
@@ -577,11 +577,13 @@ class ImageGatewayPlugin(Star):
     ):
         merged_chain = await self._build_fake_forward_chain(
             event,
-            start_message_text,
+            summary_text,
             image_paths,
             fake_forward_config,
         )
         if not merged_chain:
+            if summary_text:
+                yield event.plain_result(summary_text)
             async for result in self._send_generated_images(
                 event,
                 image_paths,
@@ -662,30 +664,29 @@ class ImageGatewayPlugin(Star):
 
         elapsed = time.time() - started
         success_message_text = f"{success_label}成功，用时{elapsed:.1f}秒"
-        success_message_sender_order = get_sender_order(effective_send_strategy)
-        success_message_sent_directly = await self._send_plain_text_directly(
-            event,
-            success_message_text,
-            sender_order=success_message_sender_order,
-        )
         await self._retract_start_message(event, start_message.message_id)
-
-        if not success_message_sent_directly:
-            yield event.plain_result(success_message_text)
-            if not effective_fake_forward.enabled:
-                return
 
         image_paths = [str(path) for path in paths]
         if effective_fake_forward.enabled:
             async for result in self._send_fake_forward_result(
                 event,
-                start_message.text,
+                success_message_text,
                 image_paths,
                 fake_forward_config=effective_fake_forward,
                 send_strategy=effective_send_strategy,
             ):
                 yield result
             return
+
+        success_message_sender_order = get_sender_order(effective_send_strategy)
+        success_message_sent_directly = await self._send_plain_text_directly(
+            event,
+            success_message_text,
+            sender_order=success_message_sender_order,
+        )
+
+        if not success_message_sent_directly:
+            yield event.plain_result(success_message_text)
 
         async for result in self._send_generated_images(
             event,

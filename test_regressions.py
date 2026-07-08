@@ -817,6 +817,59 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.sent_messages[0][0].text.startswith("改图成功，用时"), True)
         self.assertEqual(event.sent_messages[1], ["image:generated.png"])
 
+    async def test_run_generation_fake_forward_merges_success_text_instead_of_start_message(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance._refresh_services = lambda: None
+        plugin_instance.context = types.SimpleNamespace(get_config=lambda: {})
+        plugin_instance.global_send_strategy = SendStrategy.DIRECT_FIRST
+        plugin_instance.generation_service = types.SimpleNamespace(
+            _normalize_requested_count=lambda mode, count: 1,
+            validate_request_count=lambda requested_count: None,
+            generate=self._build_generate_result(
+                [Path("generated.png")],
+                fake_forward_config=FakeForwardConfig(mode=FakeForwardMode.REQUESTER.value),
+            ),
+        )
+
+        async def build_image_component(image_path: str):
+            return f"image:{image_path}"
+
+        async def retract_start_message(event, message_id):
+            return None
+
+        plugin_instance._build_image_component = build_image_component
+        plugin_instance._send_start_message = self._build_start_message_result
+        plugin_instance._retract_start_message = retract_start_message
+        plugin_instance.generation_service.validate_request_count = (
+            lambda requested_count, mode="text_to_image": None
+        )
+
+        event = FakeEvent("/生图 测试", sender_id="24680", sender_name="Requester")
+        event.sent_messages = []
+
+        async def send(message_chain):
+            event.sent_messages.append(list(message_chain))
+
+        event.send = send
+
+        results = []
+        async for result in plugin_instance._run_generation(
+            event,
+            mode="text_to_image",
+            prompt="测试",
+            count=1,
+            success_label="生图",
+        ):
+            results.append(result)
+
+        self.assertEqual(results, [])
+        self.assertEqual(len(event.sent_messages), 1)
+        merged_nodes = event.sent_messages[0][0].nodes
+        self.assertEqual(len(merged_nodes), 2)
+        self.assertTrue(merged_nodes[0].content[0].text.startswith("生图成功，用时"))
+        self.assertNotIn("开始生成", merged_nodes[0].content[0].text)
+        self.assertEqual(merged_nodes[1].content[-1], "image:generated.png")
+
     async def test_run_generation_retracts_passively_sent_start_message_with_platform_message_id(self) -> None:
         start_message_client = FakePlatformClient(
             responses={
@@ -908,9 +961,13 @@ class SuccessDeliveryRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(nodes[1].content[-1], "image:generated.png")
 
     @staticmethod
-    def _build_generate_result(paths: list[Path]):
+    def _build_generate_result(
+        paths: list[Path],
+        *,
+        fake_forward_config: FakeForwardConfig | None = None,
+    ):
         async def generate(**kwargs):
-            return paths, "Test Model", SendStrategy.DIRECT_FIRST, FakeForwardConfig()
+            return paths, "Test Model", SendStrategy.DIRECT_FIRST, (fake_forward_config or FakeForwardConfig())
 
         return generate
 
