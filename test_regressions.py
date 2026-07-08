@@ -1255,7 +1255,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
 
         self.assertEqual(workflow_template["display_item"], "workflow_id")
         self.assertNotIn("display_name", workflow_items)
-        self.assertIn("显示名称：工作流ID输入框中的变量", workflow_template["hint"])
+        self.assertIn("显示名称：工作流 ID (workflow_id)输入框中输入的内容变量", workflow_template["hint"])
         self.assertEqual(
             workflow_items["workflow_id"]["hint"],
             "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
