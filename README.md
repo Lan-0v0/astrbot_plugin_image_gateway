@@ -1,5 +1,4 @@
-# <img width="256" height="256" alt="logo" src="https://github.com/user-attachments/assets/b4232e6b-96eb-433f-86ad-8cd66bc23f8c" />
-astrbot\_plugin\_image\_gateway
+# <img width="256" height="256" alt="logo" src="https://github.com/user-attachments/assets/b4232e6b-96eb-433f-86ad-8cd66bc23f8c" />astrbot\_plugin\_image\_gateway
 
 
 
