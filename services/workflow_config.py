@@ -145,10 +145,11 @@ class WorkflowConfig:
         workflow_id = str(entry.get("workflow_id") or "").strip() or str(
             entry.get("display_name") or "未命名工作流"
         ).strip()
+        display_name = workflow_id or "未命名工作流"
 
         return cls(
             workflow_id=workflow_id,
-            display_name=str(entry.get("display_name") or "未命名工作流"),
+            display_name=display_name,
             workflow_content_raw=str(entry.get("workflow_content") or ""),
             priority=resolve_priority_value(entry, default_priority=10),
             enabled=bool(entry.get("enabled", True)),

@@ -100,7 +100,7 @@ class GenerationService:
         requested_count = self._normalize_requested_count(mode, count)
         self.validate_request_count(requested_count, mode=mode)
 
-        errors: list[str] = []
+        execution_errors: list[str] = []
         had_sensitive = False
         quota_exhausted_target_count = 0
         mode_unsupported_target_count = 0
@@ -110,12 +110,11 @@ class GenerationService:
             for target in self.targets:
                 if isinstance(target, WorkflowConfig) and not target.supports_mode(mode):
                     mode_unsupported_target_count += 1
-                    errors.append(f"{target.display_name}: 当前工作流暂不支持{describe_mode(mode)}")
                     continue
 
                 if self._request_count_exceeds_limit(target, requested_count):
                     quota_exhausted_target_count += 1
-                    errors.append(f"{target.display_name}: 超出生成张数上限")
+                    execution_errors.append(f"{target.display_name}: 超出生成张数上限")
                     continue
 
                 retry_count = self._resolve_retry_count(target)
@@ -154,18 +153,18 @@ class GenerationService:
                         had_sensitive = True
                         msg = f"{target.display_name}: {exc}"
                         logger.warning(msg)
-                        errors.append(msg)
+                        execution_errors.append(msg)
                         break
                     except GenerationError as exc:
                         msg = f"{target.display_name}: {exc}"
                         logger.warning(msg)
                         if attempt == retry_count - 1:
-                            errors.append(msg)
+                            execution_errors.append(msg)
                     except Exception as exc:
                         msg = f"{target.display_name}: {exc}"
                         logger.error(msg)
                         if attempt == retry_count - 1:
-                            errors.append(msg)
+                            execution_errors.append(msg)
 
         if had_sensitive:
             raise SensitiveContentError(mode)
@@ -178,7 +177,7 @@ class GenerationService:
                 f"已启用的工作流暂不支持{describe_mode(mode)}，请配置支持对应模式的模型或工作流"
             )
 
-        brief = errors[-1] if errors else "所有模型均生成失败"
+        brief = execution_errors[-1] if execution_errors else "所有模型均生成失败"
         if len(brief) > 120:
             brief = brief[:117] + "..."
         raise GenerationError(brief)

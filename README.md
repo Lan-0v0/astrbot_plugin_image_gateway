@@ -4,7 +4,7 @@
 
 
 
-AstrBot 多模型图像生成网关插件。支持 OpenAI Images API 与 Google Gemini 图像接口，支持Wrokflow工作流如ComfyUI，可自定义baseURL、模型名称、显示名称、优先级、重试次数及审核力度。支持文生图、图生图两种模式，支持自然语言。
+AstrBot 多模型图像生成网关插件。支持 OpenAI Images API、Google Gemini 图像接口与 ComfyUI Workflow，可自定义 baseURL、模型名称、工作流 ID、优先级、重试次数及审核力度。支持文生图、图生图两种模式，支持自然语言。
 
 ## 功能特性
 
@@ -310,13 +310,12 @@ https://github.com/Lan-0v0/astrbot\_plugin\_image\_gateway
 
 |字段|说明|
 |-|-|
-|`display\_name`|显示名称|
 |`enabled`|是否启用|
 |`priority\_preset`|优先级预设。推荐直接选择“最高 / 高 / 普通 / 低 / 最低”|
 |`priority`|仅当 `priority\_preset=custom` 时使用的自定义优先级数值。预设对应：最高=`40`，高=`30`，普通=`20`，低=`10`，最低=`0`|
 |`retry\_count`|重试次数，`-1` 表示使用全局默认|
 |`max\_generation\_count`|单次请求最大生成张数，`-1` 表示使用全局默认|
-|`workflow\_id`|工作流唯一标识，用于关联下方的工作流自定义节点条目|
+|`workflow\_id`|工作流 ID，同时也会直接作为该工作流的显示名称；用于关联下方的工作流自定义节点条目，可输入任意中文/英文/符号作为名称|
 |`supported\_modes`|工作流支持的模式。可选“仅文生图”“文生图 + 改图”“仅改图”；默认仅 `text\_to\_image`|
 |`runtime\_base\_url\_override`|覆盖 ComfyUI 地址；留空则使用全局默认|
 |`runtime\_api\_key\_override`|覆盖 ComfyUI 鉴权 Token；留空则使用全局默认|
@@ -625,6 +624,19 @@ astrbot\_plugin\_image\_gateway/
   "image\_to\_image\_value": "0.45"
 }
 ```
+
+## v1.3.6 补充说明
+
+### 工作流显示名称简化
+
+* 配置面板中的 ComfyUI 工作流条目已移除单独的“显示名称”输入项
+* 现在直接使用 `workflow_id` 作为工作流显示名称，并用于关联下方“工作流自定义节点条目”
+* `workflow_id` 可输入任意中文、英文或符号，只要你自己便于辨认即可
+
+### 调度报错修复
+
+* 当同时存在“仅文生图”和“仅改图”工作流时，如果真正参与执行的文生图工作流因为节点 ID 或字段路径写错而失败，现在会优先返回真实执行错误
+* 不再被后续被跳过的“仅改图工作流暂不支持文生图”提示覆盖，排错会更直接
 
 ## v1.3.5 补充说明
 

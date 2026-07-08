@@ -1182,6 +1182,30 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             ["text_to_image", "both", "image_to_image"],
         )
 
+    def test_conf_schema_uses_workflow_id_as_workflow_display_item(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        workflow_template = schema["workflows"]["templates"]["comfyui"]
+        workflow_items = workflow_template["items"]
+
+        self.assertEqual(workflow_template["display_item"], "workflow_id")
+        self.assertNotIn("display_name", workflow_items)
+        self.assertIn("显示名称：工作流ID输入框中的变量", workflow_template["hint"])
+        self.assertEqual(
+            workflow_items["workflow_id"]["hint"],
+            "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
+        )
+
+    def test_conf_schema_updates_binding_display_name_hint_for_workflow_linking(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        binding_items = schema["workflow_node_bindings"]["templates"]["binding"]["items"]
+
+        self.assertEqual(
+            binding_items["display_name"]["hint"],
+            "显示名称输入框中的变量——所属工作流 ID输入框中的变量",
+        )
+
     def test_conf_schema_exposes_fake_forward_options_for_models_and_workflows(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
@@ -1329,11 +1353,24 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(workflow_config.workflow_id, "portrait_flux")
+        self.assertEqual(workflow_config.display_name, "portrait_flux")
         self.assertEqual(workflow_config.kind, "workflow")
         self.assertEqual(workflow_config.send_strategy, FOLLOW_GLOBAL)
         self.assertEqual(workflow_config.fake_forward_mode, FakeForwardMode.CUSTOM_QQ.value)
         self.assertEqual(workflow_config.fake_forward_custom_qq, "778899")
         self.assertEqual(workflow_config.supported_modes, ["text_to_image"])
+
+    def test_from_template_entry_uses_workflow_id_as_display_name(self) -> None:
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "portrait_flux",
+                "display_name": "旧显示名称",
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+            }
+        )
+
+        self.assertEqual(workflow_config.workflow_id, "portrait_flux")
+        self.assertEqual(workflow_config.display_name, "portrait_flux")
 
     def test_from_template_entry_falls_back_to_display_name_as_workflow_id(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
@@ -1344,6 +1381,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(workflow_config.workflow_id, "默认工作流ID")
+        self.assertEqual(workflow_config.display_name, "默认工作流ID")
 
     def helper_from_template_entry_falls_back_to_comfyui_for_unknown_workflow_type(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry({"workflow_type": "unknown-engine"})
@@ -1769,8 +1807,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
     ) -> WorkflowConfig:
         return WorkflowConfig.from_template_entry(
             {
-                "workflow_id": display_name.lower(),
-                "display_name": display_name,
+                "workflow_id": display_name,
                 "priority": priority,
                 "supported_modes": supported_modes or ["text_to_image"],
                 "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
@@ -2036,6 +2073,46 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(target_name, "FallbackModel")
         self.assertEqual(paths, [Path("fallback_generated.png")])
 
+    async def test_real_workflow_error_is_not_overwritten_by_mode_mismatch_skip_message(self) -> None:
+        failing_text_workflow = self.build_workflow(
+            "miaomiao文生图",
+            priority=20,
+            supported_modes=["text_to_image"],
+        )
+        skipped_image_workflow = self.build_workflow(
+            "miaomiao改图",
+            priority=10,
+            supported_modes=["image_to_image"],
+        )
+        counter = FakeCounter()
+        service = GenerationService(
+            [failing_text_workflow, skipped_image_workflow],
+            [
+                WorkflowNodeBinding(
+                    workflow_id=failing_text_workflow.workflow_id,
+                    node_id="6",
+                    field_path="inputs.Append",
+                    binding_type="prompt_positive",
+                )
+            ],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+            FakeClientSession,
+        ):
+            with self.assertRaises(GenerationError) as raised_error:
+                await service.generate(mode="text_to_image", prompt="JK")
+
+        self.assertIn("miaomiao文生图", str(raised_error.exception))
+        self.assertIn("字段路径 inputs.Append 无效", str(raised_error.exception))
+        self.assertNotIn("miaomiao改图", str(raised_error.exception))
+        self.assertNotIn("暂不支持文生图", str(raised_error.exception))
+
     async def _return_generated_path(self, *args, **kwargs):
         return [Path("fallback_generated.png")]
 
@@ -2051,7 +2128,6 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             "workflows": [
                 {
                     "workflow_id": "test-workflow",
-                    "display_name": "TestWorkflow",
                     "priority": 10,
                     "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
                 }
@@ -2068,7 +2144,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         service = GenerationService.from_config(config, Path("."), FakeCounter())
 
         self.assertEqual(len(service.targets), 2)
-        self.assertEqual(service.targets[0].display_name, "TestWorkflow")
+        self.assertEqual(service.targets[0].display_name, "test-workflow")
         self.assertEqual(service.targets[1].display_name, "TestModel")
         self.assertEqual(len(service.workflow_node_bindings), 1)
 
