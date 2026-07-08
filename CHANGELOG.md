@@ -1,3 +1,11 @@
+## v1.4.5
+
+- 参考"图像生成模型列表"中 OpenAI/Gemini 条目的介绍方式，将"工作流（Workflow）列表"下 ComfyUI 条目的 `display_item` 从数组形式 `["workflow_id"]` 改为字符串形式 `"workflow_id"`，与 OpenAI/Gemini 使用 `"display_name"` 的写法保持一致
+- 现在工作流条目副标题只显示 `workflow_id` 的实际内容，例如在"工作流 ID (workflow_id)"中输入 `文生图1`，则显示 `文生图1`
+- 将 ComfyUI 模板介绍文案改为 `工作流 ID (workflow_id)输入框中输入的内容变量`，并移除 `hide_hint_in_list` 设置，使介绍文案正常展示
+- 此前使用数组形式 `display_item` 导致 AstrBot 配置面板将字段描述拼入副标题，造成 `miaomiao文生图——工作流 ID (workflow_id)输入框输入的内容变量` 这类异常显示；改为字符串形式后该问题彻底消除
+- 同步更新回归测试、README 与版本信息
+
 ## v1.4.4
 
 - 修正本地实际运行副本与发布仓库未同步导致的工作流条目副标题无变化问题，并统一为只显示 `workflow_id` 实际内容

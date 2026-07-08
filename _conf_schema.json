@@ -370,11 +370,8 @@
     "templates": {
       "comfyui": {
         "name": "ComfyUI",
-        "hint": "需要粘贴 ComfyUI 使用“导出（API 格式）”得到的完整工作流 JSON。",
-        "display_item": [
-          "workflow_id"
-        ],
-        "hide_hint_in_list": true,
+        "hint": "工作流 ID (workflow_id)输入框中输入的内容变量",
+        "display_item": "workflow_id",
         "items": {
           "workflow_id": {
             "description": "工作流 ID",
