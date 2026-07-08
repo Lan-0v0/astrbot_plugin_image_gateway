@@ -523,11 +523,15 @@
     "templates": {
       "binding": {
         "name": "自定义节点条目",
-        "display_item": "display_name",
+        "display_item": [
+          "display_name",
+          "workflow_id"
+        ],
+        "display_item_separator": "——",
         "items": {
           "display_name": {
             "description": "显示名称",
-            "hint": "显示名称输入框中的变量——所属工作流 ID输入框中的变量",
+            "hint": "给这条规则起一个你自己容易识别的名字，例如“正向提示词节点”“反向提示词节点”“CFG 参数节点”",
             "type": "string",
             "default": "节点覆盖规则"
           },

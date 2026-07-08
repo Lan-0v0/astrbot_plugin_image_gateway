@@ -1253,14 +1253,20 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
         )
 
-    def test_conf_schema_updates_binding_display_name_hint_for_workflow_linking(self) -> None:
+    def test_conf_schema_uses_composite_binding_display_item_and_restores_display_name_hint(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
-        binding_items = schema["workflow_node_bindings"]["templates"]["binding"]["items"]
+        binding_template = schema["workflow_node_bindings"]["templates"]["binding"]
+        binding_items = binding_template["items"]
 
         self.assertEqual(
+            binding_template["display_item"],
+            ["display_name", "workflow_id"],
+        )
+        self.assertEqual(binding_template["display_item_separator"], "——")
+        self.assertEqual(
             binding_items["display_name"]["hint"],
-            "显示名称输入框中的变量——所属工作流 ID输入框中的变量",
+            "给这条规则起一个你自己容易识别的名字，例如“正向提示词节点”“反向提示词节点”“CFG 参数节点”",
         )
 
     def test_conf_schema_exposes_fake_forward_options_for_models_and_workflows(self) -> None:

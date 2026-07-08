@@ -1,8 +1,8 @@
 name: astrbot_plugin_image_gateway
 display_name: 图像网关
-desc: 修复消息伪造转发结果内容，统一成功提示与图片合并逻辑
+desc: 修复工作流自定义节点条目显示，组合展示显示名称与所属工作流 ID
 short_desc: OpenAI/Gemini/ComfyUI 多模型生图与改图网关
-version: 1.3.7
+version: 1.3.8
 author: AstrBot
 repo: "https://github.com/Lan-0v0/astrbot_plugin_image_gateway"
 astrbot_version: ">=4.9.2,<5"
