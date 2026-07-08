@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import types
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -151,6 +153,11 @@ from astrbot_plugin_image_gateway.services.fake_forward import (  # noqa: E402
     resolve_effective_fake_forward,
 )
 from astrbot_plugin_image_gateway.services.generation import GenerationService  # noqa: E402
+from astrbot_plugin_image_gateway.services.image_cache import (  # noqa: E402
+    DEFAULT_IMAGE_CACHE_CLEANUP_DAYS,
+    cleanup_expired_image_cache,
+    parse_image_cache_cleanup_days,
+)
 from astrbot_plugin_image_gateway.services.send_strategy import (  # noqa: E402
     FOLLOW_GLOBAL,
     SendStrategy,
@@ -517,22 +524,6 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         self.assertEqual(model_config.fake_forward_mode, FakeForwardMode.CUSTOM_QQ.value)
         self.assertEqual(model_config.fake_forward_custom_qq, "123456")
 
-    def test_model_config_fake_forward_defaults_to_follow_global(self) -> None:
-        model_config = ModelConfig.from_template_entry({"provider": "openai"})
-        self.assertEqual(model_config.fake_forward_mode, FAKE_FORWARD_FOLLOW_GLOBAL)
-        self.assertEqual(model_config.fake_forward_custom_qq, "")
-
-    def test_model_config_fake_forward_parses_explicit_value(self) -> None:
-        model_config = ModelConfig.from_template_entry(
-            {
-                "provider": "openai",
-                "fake_forward_mode": "custom_qq",
-                "fake_forward_custom_qq": " QQ: 123456abc ",
-            }
-        )
-        self.assertEqual(model_config.fake_forward_mode, FakeForwardMode.CUSTOM_QQ.value)
-        self.assertEqual(model_config.fake_forward_custom_qq, "123456")
-
     def test_generation_service_from_config_uses_new_global_defaults(self) -> None:
         generation_service = GenerationService.from_config({}, Path("."), FakeCounter())
         self.assertEqual(generation_service.global_retry_count, 2)
@@ -540,8 +531,16 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         self.assertEqual(generation_service.global_send_strategy, SendStrategy.DIRECT_FIRST)
         self.assertEqual(generation_service.global_fake_forward.mode, FakeForwardMode.OFF.value)
         self.assertEqual(generation_service.global_fake_forward.custom_qq, "")
-        self.assertEqual(generation_service.global_fake_forward.mode, FakeForwardMode.OFF.value)
-        self.assertEqual(generation_service.global_fake_forward.custom_qq, "")
+
+    def test_parse_image_cache_cleanup_days_uses_default_when_missing(self) -> None:
+        self.assertEqual(
+            parse_image_cache_cleanup_days(None),
+            DEFAULT_IMAGE_CACHE_CLEANUP_DAYS,
+        )
+
+    def test_parse_image_cache_cleanup_days_allows_blank_to_disable_cleanup(self) -> None:
+        self.assertEqual(parse_image_cache_cleanup_days(""), None)
+        self.assertEqual(parse_image_cache_cleanup_days("   "), None)
 
     def test_load_start_message_config_uses_default_custom_persona_prompt(self) -> None:
         plugin_instance = object.__new__(ImageGatewayPlugin)
@@ -638,6 +637,50 @@ class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(results, ["stop after validation"])
         self.assertEqual(observed_modes, ["image_to_image"])
+
+    def test_refresh_services_reads_image_cache_cleanup_days_and_triggers_cleanup(self) -> None:
+        cleanup_calls: list[tuple[Path, int | None]] = []
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.context = None
+        plugin_instance.plugin_config = {"image_cache_cleanup_days": "14"}
+        plugin_instance._last_image_cache_cleanup_at = 0.0
+        plugin_instance._load_start_message_config = lambda raw_config: "start-config"
+        temp_data_dir = Path(self.id().replace(".", "_"))
+        if temp_data_dir.exists():
+            for existing_path in temp_data_dir.rglob("*"):
+                if existing_path.is_file():
+                    existing_path.unlink()
+            for existing_dir in sorted(temp_data_dir.rglob("*"), reverse=True):
+                if existing_dir.is_dir():
+                    existing_dir.rmdir()
+            temp_data_dir.rmdir()
+
+        def fake_cleanup(images_dir: Path) -> None:
+            cleanup_calls.append((images_dir, plugin_instance.image_cache_cleanup_days))
+
+        plugin_instance._maybe_cleanup_image_cache = fake_cleanup
+
+        with patch(
+            "astrbot_plugin_image_gateway.main.StarTools.get_data_dir",
+            return_value=temp_data_dir,
+        ):
+            with patch(
+                "astrbot_plugin_image_gateway.main.GenerationService.from_config",
+                return_value="generation-service",
+            ):
+                plugin_instance._refresh_services()
+
+        self.assertEqual(plugin_instance.image_cache_cleanup_days, 14)
+        self.assertEqual(plugin_instance.generation_service, "generation-service")
+        self.assertEqual(plugin_instance.start_message_config, "start-config")
+        self.assertEqual(len(cleanup_calls), 1)
+        for existing_path in temp_data_dir.rglob("*"):
+            if existing_path.is_file():
+                existing_path.unlink()
+        for existing_dir in sorted(temp_data_dir.rglob("*"), reverse=True):
+            if existing_dir.is_dir():
+                existing_dir.rmdir()
+        temp_data_dir.rmdir()
 
     @staticmethod
     def _raise_generation_error(message: str):
@@ -1031,6 +1074,56 @@ class FakeForwardRegressionTests(unittest.TestCase):
         self.assertEqual(effective_config.custom_qq, "")
 
 
+class ImageCacheCleanupRegressionTests(unittest.TestCase):
+    def test_parse_image_cache_cleanup_days_parses_positive_integer(self) -> None:
+        self.assertEqual(parse_image_cache_cleanup_days("14"), 14)
+        self.assertEqual(parse_image_cache_cleanup_days(3), 3)
+
+    def test_parse_image_cache_cleanup_days_disables_cleanup_for_non_positive_values(self) -> None:
+        self.assertEqual(parse_image_cache_cleanup_days("0"), None)
+        self.assertEqual(parse_image_cache_cleanup_days(-1), None)
+
+    def test_cleanup_expired_image_cache_deletes_only_expired_files(self) -> None:
+        temp_dir = Path(self.id().replace(".", "_"))
+        if temp_dir.exists():
+            for existing_path in temp_dir.rglob("*"):
+                if existing_path.is_file():
+                    existing_path.unlink()
+            for existing_dir in sorted(temp_dir.rglob("*"), reverse=True):
+                if existing_dir.is_dir():
+                    existing_dir.rmdir()
+            temp_dir.rmdir()
+
+        images_dir = temp_dir / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        expired_file = images_dir / "expired.png"
+        fresh_file = images_dir / "fresh.png"
+        expired_file.write_bytes(b"old")
+        fresh_file.write_bytes(b"new")
+
+        current_time = time.time()
+        expired_mtime = current_time - (8 * 86400)
+        fresh_mtime = current_time - (2 * 86400)
+        expired_file.touch()
+        fresh_file.touch()
+        os.utime(expired_file, (expired_mtime, expired_mtime))
+        os.utime(fresh_file, (fresh_mtime, fresh_mtime))
+
+        deleted_count = cleanup_expired_image_cache(
+            images_dir,
+            retention_days=7,
+            now=current_time,
+        )
+
+        self.assertEqual(deleted_count, 1)
+        self.assertEqual(expired_file.exists(), False)
+        self.assertEqual(fresh_file.exists(), True)
+
+        fresh_file.unlink()
+        images_dir.rmdir()
+        temp_dir.rmdir()
+
+
 class WorkflowConfigRegressionTests(unittest.TestCase):
     def test_conf_schema_uses_provider_names_for_model_templates(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -1113,6 +1206,15 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             workflow_items["fake_forward_custom_qq"]["condition"],
             {"fake_forward_mode": "custom_qq"},
         )
+
+    def test_conf_schema_exposes_image_cache_cleanup_between_fake_forward_and_send_strategy(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        schema_keys = list(schema.keys())
+        self.assertLess(schema_keys.index("fake_forward"), schema_keys.index("image_cache_cleanup_days"))
+        self.assertLess(schema_keys.index("image_cache_cleanup_days"), schema_keys.index("send_strategy"))
+        self.assertEqual(schema["image_cache_cleanup_days"]["default"], "7")
+        self.assertEqual(schema["image_cache_cleanup_days"]["type"], "string")
 
     def test_conf_schema_documents_priority_preset_numeric_values(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))

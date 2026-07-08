@@ -17,6 +17,7 @@ from .adapters import GenerationError
 from .services.counter import GenerationCounter
 from .services.fake_forward import FakeForwardConfig, FakeForwardMode, parse_global_fake_forward
 from .services.generation import GenerationService
+from .services.image_cache import cleanup_expired_image_cache, parse_image_cache_cleanup_days
 from .services.send_strategy import SendStrategy, get_sender_order, parse_global_send_strategy
 from .utils.messages import collect_input_images, parse_command_text, parse_count_and_prompt
 
@@ -52,18 +53,23 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/ComfyUI Workflow、优先级回退与自然语言触发",
-    "1.3.4",
+    "1.3.5",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
         self.plugin_config: dict = dict(config or {})
+        self._last_image_cache_cleanup_at = 0.0
         self._refresh_services()
 
     def _refresh_services(self) -> None:
         data_dir = StarTools.get_data_dir(PLUGIN_NAME)
         images_dir = data_dir / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
+        self.image_cache_cleanup_days = parse_image_cache_cleanup_days(
+            self.plugin_config.get("image_cache_cleanup_days")
+        )
+        self._maybe_cleanup_image_cache(images_dir)
         counter_file = data_dir / "generation_counts.json"
         self.generation_service = GenerationService.from_config(
             self.plugin_config,
@@ -76,6 +82,30 @@ class ImageGatewayPlugin(Star):
         self.start_message_config = self._load_start_message_config(
             self.plugin_config.get("generation_start_message")
         )
+
+    def _maybe_cleanup_image_cache(self, images_dir: Path) -> None:
+        if self.image_cache_cleanup_days is None:
+            return
+
+        now = time.time()
+        # ``_refresh_services`` 会在插件启动和生成前刷新；限制为每 6 小时最多扫描一次。
+        if (
+            self._last_image_cache_cleanup_at > 0
+            and (now - self._last_image_cache_cleanup_at) < 21600
+        ):
+            return
+
+        deleted_count = cleanup_expired_image_cache(
+            images_dir,
+            retention_days=self.image_cache_cleanup_days,
+            now=now,
+        )
+        self._last_image_cache_cleanup_at = now
+
+        if deleted_count > 0:
+            logger.info(
+                f"图片缓存定时清理完成，已删除 {deleted_count} 个超过 {self.image_cache_cleanup_days} 天的文件"
+            )
 
     def _load_start_message_config(
         self,

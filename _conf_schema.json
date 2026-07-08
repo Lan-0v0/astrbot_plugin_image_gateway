@@ -832,6 +832,12 @@
       }
     }
   },
+  "image_cache_cleanup_days": {
+    "description": "图片缓存定时清理",
+    "hint": "单位为天。默认 7 天；留空则不自动清理 images 目录中的历史图片缓存",
+    "type": "string",
+    "default": "7"
+  },
   "send_strategy": {
     "description": "全局发送链路",
     "hint": "注意：当生图成功但发送图片失败时，可尝试更改此项；该配置极少需要调整，默认「直连优先」已能覆盖绝大多数场景",

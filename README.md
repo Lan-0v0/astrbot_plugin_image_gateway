@@ -1,6 +1,9 @@
 # ![logo](logo.png) astrbot\_plugin\_image\_gateway
 
 
+
+
+
 AstrBot 多模型图像生成网关插件。支持 OpenAI Images API 与 Google Gemini 图像接口，支持Wrokflow工作流如ComfyUI，可自定义baseURL、模型名称、显示名称、优先级、重试次数及审核力度。支持文生图、图生图两种模式，支持自然语言。
 
 ## 功能特性
@@ -622,3 +625,15 @@ astrbot\_plugin\_image\_gateway/
   "image\_to\_image\_value": "0.45"
 }
 ```
+
+## v1.3.5 补充说明
+
+### 图片缓存定时清理（`image_cache_cleanup_days`）
+
+此项位于配置面板中的“全局消息伪造转发”和“全局发送链路”之间。
+
+* 单位为“天”
+* 默认值为 `7`
+* 留空表示不自动清理
+* 插件会按这个天数阈值，清理 `data/plugin_data/astrbot_plugin_image_gateway/images/` 目录中过期的历史图片缓存
+* 为了避免每次生成都重复扫描目录，插件会限制清理检查频率
