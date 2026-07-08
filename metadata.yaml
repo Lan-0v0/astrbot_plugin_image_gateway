@@ -2,7 +2,7 @@ name: astrbot_plugin_image_gateway
 display_name: 图像网关
 desc: 插件端接管工作流自定义节点条目副标题显示，修复配置面板空白问题
 short_desc: OpenAI/Gemini/ComfyUI 多模型生图与改图网关
-version: 1.4.2
+version: 1.4.3
 author: AstrBot
 repo: "https://github.com/Lan-0v0/astrbot_plugin_image_gateway"
 astrbot_version: ">=4.9.2,<5"
