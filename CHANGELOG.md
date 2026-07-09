@@ -1,3 +1,10 @@
+## v1.4.6
+
+- 修正 v1.4.5 中错误地将 `display_item` 从数组形式改为字符串形式的问题；经分析 AstrBot dashboard 前端 `TemplateListEditor.vue` 渲染逻辑，字符串形式会输出 `label: value` 格式（如 `工作流 ID: miaomiao文生图`），而非仅显示值
+- 恢复为数组形式 `["workflow_id"]`，配合 `hide_hint_in_list: true`，使条目副标题只显示 `workflow_id` 的实际内容，例如填入 `文生图1` 就只显示 `文生图1`
+- 保留 v1.4.5 的模板介绍文案 `工作流 ID (workflow_id)输入框中输入的内容变量`，该文案在列表中被 `hide_hint_in_list` 隐藏，仅在模板选择时可见
+- 同步更新回归测试、README 与版本信息
+
 ## v1.4.5
 
 - 参考"图像生成模型列表"中 OpenAI/Gemini 条目的介绍方式，将"工作流（Workflow）列表"下 ComfyUI 条目的 `display_item` 从数组形式 `["workflow_id"]` 改为字符串形式 `"workflow_id"`，与 OpenAI/Gemini 使用 `"display_name"` 的写法保持一致

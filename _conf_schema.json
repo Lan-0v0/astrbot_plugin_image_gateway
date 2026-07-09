@@ -371,7 +371,10 @@
       "comfyui": {
         "name": "ComfyUI",
         "hint": "工作流 ID (workflow_id)输入框中输入的内容变量",
-        "display_item": "workflow_id",
+        "display_item": [
+          "workflow_id"
+        ],
+        "hide_hint_in_list": true,
         "items": {
           "workflow_id": {
             "description": "工作流 ID",

@@ -641,14 +641,21 @@ astrbot\_plugin\_image\_gateway/
 * 当同时存在“仅文生图”和“仅改图”工作流时，如果真正参与执行的文生图工作流因为节点 ID 或字段路径写错而失败，现在会优先返回真实执行错误
 * 不再被后续被跳过的“仅改图工作流暂不支持文生图”提示覆盖，排错会更直接
 
+## v1.4.6 补充说明
+
+### 工作流条目副标题显示修正（最终版）
+
+* v1.4.5 曾尝试将 `display_item` 从数组形式 `["workflow_id"]` 改为字符串形式 `"workflow_id"`（与 OpenAI/Gemini 的 `"display_name"` 写法对齐），但经分析 AstrBot dashboard 前端 `TemplateListEditor.vue` 的渲染逻辑发现：字符串形式会输出 `label: value` 格式（如 `工作流 ID: miaomiao文生图`），而非仅显示值本身
+* 现已恢复为数组形式 `["workflow_id"]` 并配合 `hide_hint_in_list: true`：数组形式只有一个元素时直接返回该值（不会出现 `——` 分隔符），`hide_hint_in_list` 则隐藏模板提示文案，避免提示文案与条目值混排
+* 最终效果：在"工作流 ID (workflow_id)"中输入 `文生图1`，条目副标题就只显示 `文生图1`
+* 模板介绍文案保留为 `工作流 ID (workflow_id)输入框中输入的内容变量`，该文案在列表中被隐藏，仅在新增条目选择模板时可见
+* **重要**：修改 schema 后需要重启 AstrBot 才能生效，因为后端进程在启动时将 schema 读入内存，前端通过后端 API 获取 schema
+
 ## v1.4.5 补充说明
 
-### 工作流条目介绍方式对齐 OpenAI/Gemini
+### 工作流条目介绍方式对齐 OpenAI/Gemini（已废弃）
 
-* 参考"图像生成模型列表"中 OpenAI/Gemini 条目的介绍方式，将"工作流（Workflow）列表"下 ComfyUI 条目的 `display_item` 从数组形式 `["workflow_id"]` 改为字符串形式 `"workflow_id"`，与 OpenAI/Gemini 使用 `"display_name"` 的写法保持一致
-* 现在工作流条目副标题只显示 `workflow_id` 的实际内容，例如在"工作流 ID (workflow_id)"中输入 `文生图1`，则显示 `文生图1`
-* 将 ComfyUI 模板介绍文案改为 `工作流 ID (workflow_id)输入框中输入的内容变量`，移除 `hide_hint_in_list` 设置，使介绍文案正常展示，不再与条目值混排成 `miaomiao文生图——工作流 ID (workflow_id)输入框输入的内容变量` 这类异常显示
-* 此前 v1.4.3/v1.4.4 使用数组形式 `display_item` 并配合 `hide_hint_in_list` 隐藏提示文案，但 AstrBot 配置面板对数组形式 `display_item` 的渲染会将字段描述拼入副标题，导致显示异常；改为字符串形式后该问题彻底消除
+* v1.4.5 将 `display_item` 从数组形式改为字符串形式，但经实际验证字符串形式会添加 `label: ` 前缀，不符合预期，此方案已在 v1.4.6 中回退
 
 ## v1.4.4 补充说明
 
