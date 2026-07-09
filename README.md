@@ -643,21 +643,12 @@ astrbot\_plugin\_image\_gateway/
 
 ## v1.4.7 补充说明
 
-### 工作流条目副标题显示修正（对齐 OpenAI/Gemini 展示方式）
+### 工作流条目副标题显示修正（display_summary 模式）
 
-* 移除 ComfyUI 工作流模板的 `hide_hint_in_list` 设置，使模板介绍文案 `工作流 ID (workflow_id)输入框中输入的内容变量` 在条目列表中正常显示，与 OpenAI/Gemini 条目的展示方式完全一致
-* 保留数组形式 `display_item: ["workflow_id"]`，确保条目副标题只显示 `workflow_id` 的实际内容（如 `文生图1`），不会出现 `——` 分隔符或 `label: value` 前缀
-* 最终效果：条目副标题第一行显示 `workflow_id` 的值（如 `文生图1`），第二行显示模板介绍文案 `工作流 ID (workflow_id)输入框中输入的内容变量`
-* **重要**：修改 schema 后需要重启 AstrBot 才能生效，因为后端进程在启动时将 schema 读入内存，前端通过后端 API 获取 schema。如果修改后仍看到旧显示，请重启 AstrBot
-
-## v1.4.7 补充说明
-
-### 工作流条目副标题显示修正（最终版）
-
-* 移除 ComfyUI 工作流模板的 `hide_hint_in_list` 设置，使模板介绍文案 `工作流 ID (workflow_id)输入框中输入的内容变量` 在条目列表中正常显示，与 OpenAI/Gemini 条目的展示方式完全一致
-* 保留数组形式 `display_item: ["workflow_id"]`：数组只有一个元素时直接返回该值，不会出现 `——` 分隔符或字段描述前缀
-* 最终效果：条目副标题显示两行——第一行是 `workflow_id` 的实际内容（如 `文生图1`），第二行是模板介绍文案 `工作流 ID (workflow_id)输入框中输入的内容变量`
-* **重要**：修改 schema 后需要重启 AstrBot 才能生效，因为后端进程在启动时将 schema 读入内存，前端通过后端 API 获取 schema
+* 参照"工作流自定义节点条目"已验证的 `display_summary` 渲染模式，将 ComfyUI 工作流模板的 `display_item` 改为 `["display_summary"]`（数组形式），并新增 `invisible: true` 的 `display_summary` 字段
+* 插件 `_normalize_plugin_config` 现在自动将每个工作流条目的 `display_summary` 设为其 `workflow_id` 值并持久化到配置文件，确保条目副标题只显示 `workflow_id` 的实际内容（如 `文生图1`）
+* 此前使用 `["workflow_id"]` 数组形式时，因 `workflow_id` 字段可见而导致 dashboard 副标题显示 `值——提示文案`（如 `miaomiao文生图——工作流 ID (workflow_id)输入框输入的内容变量`）；改为不可见的 `display_summary` 字段后，dashboard 只渲染字段值本身，不再拼接提示文案
+* **重要**：修改 schema 后需要重启 AstrBot 或重载插件才能生效，因为后端进程在启动时将 schema 读入内存，前端通过后端 API 获取 schema。如果修改后仍看到旧显示，请重载插件或重启 AstrBot
 
 ## v1.4.6 补充说明
 

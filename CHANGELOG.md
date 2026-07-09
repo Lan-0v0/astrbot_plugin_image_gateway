@@ -1,8 +1,9 @@
 ## v1.4.7
 
-- 移除 ComfyUI 工作流模板的 `hide_hint_in_list` 设置，使模板介绍文案 `工作流 ID (workflow_id)输入框中输入的内容变量` 在条目列表中正常显示，与 OpenAI/Gemini 条目的展示方式一致
-- 保留数组形式 `display_item: ["workflow_id"]`，确保条目副标题只显示 `workflow_id` 的实际内容（如 `文生图1`），不会出现 `——` 分隔符或字段描述前缀
-- 更新回归测试，验证 `hide_hint_in_list` 已从 ComfyUI 模板中移除
+- 参照"工作流自定义节点条目"已验证的 `display_summary` 模式，将 ComfyUI 工作流模板的 `display_item` 改为 `["display_summary"]`（数组形式），并新增 `invisible: true` 的 `display_summary` 字段
+- 插件 `_normalize_plugin_config` 现在自动将每个工作流条目的 `display_summary` 设为其 `workflow_id` 值，并持久化到配置文件，确保条目副标题只显示 `workflow_id` 的实际内容（如 `文生图1`）
+- 此前使用 `["workflow_id"]` 数组形式时，因 `workflow_id` 字段可见而导致副标题显示 `值——提示文案`；改为不可见的 `display_summary` 字段后，dashboard 只渲染字段值本身，不再拼接提示文案
+- 更新回归测试：验证 schema 中 `display_item` 为 `["display_summary"]`、`display_summary` 字段为 `invisible`，以及插件归一化逻辑正确设置 `display_summary = workflow_id` 并持久化
 - 同步更新 README 与版本信息
 
 ## v1.4.6

@@ -1253,9 +1253,9 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         workflow_template = schema["workflows"]["templates"]["comfyui"]
         workflow_items = workflow_template["items"]
 
-        self.assertEqual(workflow_template["display_item"], ["workflow_id"])
+        self.assertEqual(workflow_template["display_item"], ["display_summary"])
         self.assertNotIn("hide_hint_in_list", workflow_template)
-        self.assertNotIn("display_name", workflow_items)
+        self.assertTrue(workflow_items["display_summary"]["invisible"])
         self.assertEqual(
             workflow_template["hint"],
             "工作流 ID (workflow_id)输入框中输入的内容变量",
@@ -1307,6 +1307,31 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(
             config.saved_config["workflow_node_bindings"][0]["display_summary"],
             expected_summary,
+        )
+
+    def test_plugin_normalizes_workflow_display_summary_to_workflow_id(self) -> None:
+        config_cls = sys.modules["astrbot.api"].AstrBotConfig
+        config = config_cls(
+            {
+                "workflows": [
+                    {
+                        "__template_key": "comfyui",
+                        "workflow_id": "文生图1",
+                        "enabled": True,
+                    }
+                ]
+            }
+        )
+
+        context_cls = sys.modules["astrbot.api.star"].Context
+        plugin = ImageGatewayPlugin(context_cls(), config)
+
+        workflow_entry = plugin.plugin_config["workflows"][0]
+        self.assertEqual(workflow_entry["display_summary"], "文生图1")
+        self.assertIsNotNone(config.saved_config)
+        self.assertEqual(
+            config.saved_config["workflows"][0]["display_summary"],
+            "文生图1",
         )
 
     def test_conf_schema_exposes_fake_forward_options_for_models_and_workflows(self) -> None:

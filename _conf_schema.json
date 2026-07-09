@@ -372,9 +372,15 @@
         "name": "ComfyUI",
         "hint": "工作流 ID (workflow_id)输入框中输入的内容变量",
         "display_item": [
-          "workflow_id"
+          "display_summary"
         ],
         "items": {
+          "display_summary": {
+            "description": "Display Summary",
+            "type": "string",
+            "default": "",
+            "invisible": true
+          },
           "workflow_id": {
             "description": "工作流 ID",
             "hint": "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",

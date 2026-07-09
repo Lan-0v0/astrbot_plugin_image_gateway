@@ -67,6 +67,15 @@ class ImageGatewayPlugin(Star):
 
     def _normalize_plugin_config(self) -> None:
         changed = False
+        raw_workflows = self.plugin_config.get("workflows")
+        if isinstance(raw_workflows, list):
+            for entry in raw_workflows:
+                if not isinstance(entry, dict):
+                    continue
+                workflow_id = str(entry.get("workflow_id") or "").strip()
+                if entry.get("display_summary") != workflow_id:
+                    entry["display_summary"] = workflow_id
+                    changed = True
         raw_bindings = self.plugin_config.get("workflow_node_bindings")
         if isinstance(raw_bindings, list):
             for entry in raw_bindings:
