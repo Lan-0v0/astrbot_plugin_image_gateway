@@ -835,13 +835,16 @@
     "templates": {
       "comfyui": {
         "name": "ComfyUI",
-        "hint": "显示名称 (display_name)输入框中输入的内容变量",
-        "display_item": "display_name",
+        "display_item": [
+          "display_summary"
+        ],
+        "hide_hint_in_list": true,
         "items": {
-          "display_name": {
-            "description": "显示名称",
+          "display_summary": {
+            "description": "Display Summary",
             "type": "string",
-            "default": "ComfyUI 工作流"
+            "default": "",
+            "invisible": true
           },
           "workflow_id": {
             "description": "工作流 ID",
@@ -986,13 +989,16 @@
       },
       "a1111": {
         "name": "A1111 Stable Diffusion WebUI",
-        "hint": "显示名称 (display_name)输入框中输入的内容变量",
-        "display_item": "display_name",
+        "display_item": [
+          "display_summary"
+        ],
+        "hide_hint_in_list": true,
         "items": {
-          "display_name": {
-            "description": "显示名称",
+          "display_summary": {
+            "description": "Display Summary",
             "type": "string",
-            "default": "A1111 工作流"
+            "default": "",
+            "invisible": true
           },
           "workflow_id": {
             "description": "工作流 ID",
@@ -1073,10 +1079,10 @@
     "templates": {
       "binding": {
         "name": "自定义节点条目",
-        "hint": "显示名称 (display_name)——所属工作流 ID (workflow_id)",
         "display_item": [
           "display_summary"
         ],
+        "hide_hint_in_list": true,
         "items": {
           "display_summary": {
             "description": "Display Summary",

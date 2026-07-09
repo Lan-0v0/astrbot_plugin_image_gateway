@@ -147,9 +147,7 @@ class WorkflowConfig:
         workflow_id = str(entry.get("workflow_id") or "").strip() or str(
             entry.get("display_name") or "未命名工作流"
         ).strip()
-        display_name = (
-            str(entry.get("display_name") or "").strip() or workflow_id or "未命名工作流"
-        )
+        display_name = workflow_id or "未命名工作流"
 
         workflow_engine = _normalize_workflow_engine(
             entry.get("__template_key")

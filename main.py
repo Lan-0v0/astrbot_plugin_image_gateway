@@ -70,7 +70,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.0.1",
+    "2.0.2",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -83,6 +83,18 @@ class ImageGatewayPlugin(Star):
 
     def _normalize_plugin_config(self) -> None:
         changed = False
+        raw_workflows = self.plugin_config.get("workflows")
+        if isinstance(raw_workflows, list):
+            for entry in raw_workflows:
+                if not isinstance(entry, dict):
+                    continue
+                workflow_id = str(entry.get("workflow_id") or "").strip()
+                if workflow_id and "display_name" in entry:
+                    entry.pop("display_name", None)
+                    changed = True
+                if entry.get("display_summary") != workflow_id:
+                    entry["display_summary"] = workflow_id
+                    changed = True
         raw_bindings = self.plugin_config.get("workflow_node_bindings")
         if isinstance(raw_bindings, list):
             for entry in raw_bindings:

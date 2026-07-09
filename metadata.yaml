@@ -2,7 +2,7 @@ name: astrbot_plugin_image_gateway
 display_name: 图像网关
 desc: 新增阿里云百炼、火山引擎、MiniMax、智谱、腾讯混元图像 API 与 A1111 WebUI 工作流支持
 short_desc: 国内外多模型 + ComfyUI/A1111 生图改图网关
-version: 2.0.1
+version: 2.0.2
 author: AstrBot
 repo: "https://github.com/Lan-0v0/astrbot_plugin_image_gateway"
 astrbot_version: ">=4.9.2,<5"

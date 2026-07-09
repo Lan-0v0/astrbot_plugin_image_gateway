@@ -1342,8 +1342,10 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
 
         a1111_template = schema["workflows"]["templates"]["a1111"]
         self.assertEqual(a1111_template["name"], "A1111 Stable Diffusion WebUI")
-        self.assertEqual(a1111_template["display_item"], "display_name")
-        self.assertIn("display_name", a1111_template["items"])
+        self.assertEqual(a1111_template["display_item"], ["display_summary"])
+        self.assertTrue(a1111_template["hide_hint_in_list"])
+        self.assertTrue(a1111_template["items"]["display_summary"]["invisible"])
+        self.assertNotIn("display_name", a1111_template["items"])
         self.assertIn("txt2img", a1111_template["items"]["workflow_content"]["hint"])
 
     def test_conf_schema_moves_prompt_and_image_usage_help_into_binding_type_hint(self) -> None:
@@ -1398,25 +1400,22 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             ["text_to_image", "both", "image_to_image"],
         )
 
-    def test_conf_schema_uses_display_name_as_workflow_display_item(self) -> None:
+    def test_conf_schema_uses_workflow_id_as_workflow_display_item(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
-        workflow_template = schema["workflows"]["templates"]["comfyui"]
-        workflow_items = workflow_template["items"]
+        for template_key in ("comfyui", "a1111"):
+            workflow_template = schema["workflows"]["templates"][template_key]
+            workflow_items = workflow_template["items"]
 
-        self.assertEqual(workflow_template["display_item"], "display_name")
-        self.assertNotIn("hide_hint_in_list", workflow_template)
-        self.assertNotIn("display_summary", workflow_items)
-        self.assertEqual(
-            workflow_template["hint"],
-            "显示名称 (display_name)输入框中输入的内容变量",
-        )
-        self.assertEqual(workflow_items["display_name"]["description"], "显示名称")
-        self.assertEqual(
-            workflow_items["workflow_id"]["hint"],
-            "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
-        )
-
+            self.assertEqual(workflow_template["display_item"], ["display_summary"])
+            self.assertTrue(workflow_template["hide_hint_in_list"])
+            self.assertNotIn("hint", workflow_template)
+            self.assertTrue(workflow_items["display_summary"]["invisible"])
+            self.assertNotIn("display_name", workflow_items)
+            self.assertEqual(
+                workflow_items["workflow_id"]["hint"],
+                "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
+            )
     def test_conf_schema_uses_plugin_managed_binding_display_summary(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
@@ -1424,13 +1423,37 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         binding_items = binding_template["items"]
 
         self.assertEqual(binding_template["display_item"], ["display_summary"])
-        self.assertEqual(
-            binding_template["hint"],
-            "显示名称 (display_name)——所属工作流 ID (workflow_id)",
-        )
+        self.assertTrue(binding_template["hide_hint_in_list"])
+        self.assertNotIn("hint", binding_template)
         self.assertTrue(binding_items["display_summary"]["invisible"])
         self.assertIn("CFG", binding_items["display_name"]["hint"])
+    def test_plugin_normalizes_workflow_display_summary_to_workflow_id(self) -> None:
+        config_cls = sys.modules["astrbot.api"].AstrBotConfig
+        config = config_cls(
+            {
+                "workflows": [
+                    {
+                        "__template_key": "comfyui",
+                        "workflow_id": "miaomiao文生图",
+                        "display_name": "旧版显示名",
+                        "enabled": True,
+                    }
+                ]
+            }
+        )
 
+        context_cls = sys.modules["astrbot.api.star"].Context
+        plugin = ImageGatewayPlugin(context_cls(), config)
+
+        workflow_entry = plugin.plugin_config["workflows"][0]
+        self.assertEqual(workflow_entry["display_summary"], "miaomiao文生图")
+        self.assertNotIn("display_name", workflow_entry)
+        self.assertIsNotNone(config.saved_config)
+        self.assertEqual(
+            config.saved_config["workflows"][0]["display_summary"],
+            "miaomiao文生图",
+        )
+        self.assertNotIn("display_name", config.saved_config["workflows"][0])
     def test_plugin_normalizes_binding_display_summary_and_persists_config(self) -> None:
         config_cls = sys.modules["astrbot.api"].AstrBotConfig
         config = config_cls(
@@ -1697,14 +1720,14 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(workflow_config.workflow_id, "portrait_flux")
-        self.assertEqual(workflow_config.display_name, "My ComfyUI Workflow")
+        self.assertEqual(workflow_config.display_name, "portrait_flux")
         self.assertEqual(workflow_config.kind, "workflow")
         self.assertEqual(workflow_config.send_strategy, FOLLOW_GLOBAL)
         self.assertEqual(workflow_config.fake_forward_mode, FakeForwardMode.CUSTOM_QQ.value)
         self.assertEqual(workflow_config.fake_forward_custom_qq, "778899")
         self.assertEqual(workflow_config.supported_modes, ["text_to_image"])
 
-    def test_from_template_entry_uses_display_name_when_provided(self) -> None:
+    def test_from_template_entry_uses_workflow_id_as_display_name(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
             {
                 "workflow_id": "portrait_flux",
@@ -1714,7 +1737,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(workflow_config.workflow_id, "portrait_flux")
-        self.assertEqual(workflow_config.display_name, "旧显示名称")
+        self.assertEqual(workflow_config.display_name, "portrait_flux")
 
     def test_from_template_entry_falls_back_to_display_name_as_workflow_id(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
