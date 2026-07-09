@@ -374,7 +374,6 @@
         "display_item": [
           "workflow_id"
         ],
-        "hide_hint_in_list": true,
         "items": {
           "workflow_id": {
             "description": "工作流 ID",

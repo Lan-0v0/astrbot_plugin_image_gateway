@@ -1,3 +1,10 @@
+## v1.4.7
+
+- 移除 ComfyUI 工作流模板的 `hide_hint_in_list` 设置，使模板介绍文案 `工作流 ID (workflow_id)输入框中输入的内容变量` 在条目列表中正常显示，与 OpenAI/Gemini 条目的展示方式一致
+- 保留数组形式 `display_item: ["workflow_id"]`，确保条目副标题只显示 `workflow_id` 的实际内容（如 `文生图1`），不会出现 `——` 分隔符或字段描述前缀
+- 更新回归测试，验证 `hide_hint_in_list` 已从 ComfyUI 模板中移除
+- 同步更新 README 与版本信息
+
 ## v1.4.6
 
 - 修正 v1.4.5 中错误地将 `display_item` 从数组形式改为字符串形式的问题；经分析 AstrBot dashboard 前端 `TemplateListEditor.vue` 渲染逻辑，字符串形式会输出 `label: value` 格式（如 `工作流 ID: miaomiao文生图`），而非仅显示值

@@ -1254,7 +1254,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         workflow_items = workflow_template["items"]
 
         self.assertEqual(workflow_template["display_item"], ["workflow_id"])
-        self.assertTrue(workflow_template["hide_hint_in_list"])
+        self.assertNotIn("hide_hint_in_list", workflow_template)
         self.assertNotIn("display_name", workflow_items)
         self.assertEqual(
             workflow_template["hint"],
