@@ -1,3 +1,10 @@
+## v1.4.8
+
+- 对 ComfyUI 工作流条目副标题做代码层面的硬化修复：保留 `display_item: ["display_summary"]`，同时为工作流模板加回 `hide_hint_in_list: true`，避免已有工作流卡片继续把模板介绍文案显示在副标题区域
+- 插件 `_normalize_plugin_config` 现在会清理工作流条目中的旧版遗留字段 `display_name`，防止旧配置里的 `miaomiao文生图` 被旧前端/旧 schema 当作固定前缀继续拼到介绍文案前面
+- 更新回归测试：覆盖旧工作流配置带 `display_name` 时会被自动迁移清理，并确认 `display_summary` 仍稳定等于 `workflow_id`
+- 同步更新 README 与版本信息
+
 ## v1.4.7
 
 - 参照"工作流自定义节点条目"已验证的 `display_summary` 模式，将 ComfyUI 工作流模板的 `display_item` 改为 `["display_summary"]`（数组形式），并新增 `invisible: true` 的 `display_summary` 字段
