@@ -732,6 +732,37 @@
       }
     }
   },
+  "llm_prompt_expansion": {
+    "description": "LLM提示词扩展",
+    "hint": "开启后会在真正生图前，使用所选 LLM 将用户提示词扩展为更详细的图像生成描述",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用 LLM 提示词扩展",
+        "type": "bool",
+        "default": false
+      },
+      "llm_provider_id": {
+        "description": "LLM 提供商",
+        "hint": "留空则跟随当前默认提供商",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+          "enabled": true
+        }
+      },
+      "custom_persona_prompt": {
+        "description": "自定义人设提示词",
+        "hint": "作为 LLM 扩展提示词时的系统人设；留空则使用内置默认人设",
+        "type": "text",
+        "default": "你是一位专业的图像生成提示词工程师，擅长将简短描述扩展为细节丰富、适合 Stable Diffusion / ComfyUI 的高质量提示词。",
+        "condition": {
+          "enabled": true
+        }
+      }
+    }
+  },
   "generation_start_message": {
     "description": "生图开始提示",
     "hint": "控制开始生成前是否发送提示语；开启后支持固定语句随机发送或 LLM 生成",

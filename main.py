@@ -27,9 +27,18 @@ DEFAULT_START_MESSAGES = ["开始生成0v0~"]
 DEFAULT_LLM_CUSTOM_PERSONA_PROMPT = (
     "根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式，10字以内，结尾不加标点符号换成颜文字表情，严禁使用emoji。"
 )
+DEFAULT_LLM_PROMPT_EXPANSION_PERSONA = (
+    "你是一位专业的图像生成提示词工程师，擅长将简短描述扩展为细节丰富、适合 Stable Diffusion / ComfyUI 的高质量提示词。"
+)
 LLM_START_MESSAGE_PROMPT_TEMPLATE = (
     "请用简短自然的中文，向用户发送一句{label}开始前的提示。"
     "只输出一句话，不要换行，不要解释，不要表情，不要引号，长度尽量控制在12个字以内。"
+)
+LLM_PROMPT_EXPANSION_TEMPLATE = (
+    "请将以下用户输入扩展为更详细、更适合图像生成的提示词。"
+    "保留核心主题，补充画面细节、风格、光影与构图。"
+    "只输出扩展后的提示词，不要解释，不要换行分段，不要加引号。\n\n"
+    "原始提示词：{prompt}"
 )
 
 
@@ -44,6 +53,13 @@ class GenerationStartMessageConfig:
 
 
 @dataclass(slots=True)
+class LlmPromptExpansionConfig:
+    enabled: bool = False
+    llm_provider_id: str = ""
+    custom_persona_prompt: str = DEFAULT_LLM_PROMPT_EXPANSION_PERSONA
+
+
+@dataclass(slots=True)
 class StartMessageDispatchResult:
     text: str
     message_id: str | None = None
@@ -54,7 +70,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/ComfyUI Workflow、优先级回退与自然语言触发",
-    "1.4.8",
+    "1.5.0",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -135,6 +151,9 @@ class ImageGatewayPlugin(Star):
         self.start_message_config = self._load_start_message_config(
             self.plugin_config.get("generation_start_message")
         )
+        self.llm_prompt_expansion_config = self._load_llm_prompt_expansion_config(
+            self.plugin_config.get("llm_prompt_expansion")
+        )
 
     def _maybe_cleanup_image_cache(self, images_dir: Path) -> None:
         if self.image_cache_cleanup_days is None:
@@ -194,6 +213,24 @@ class ImageGatewayPlugin(Star):
             llm_provider_id=llm_provider_id,
             llm_persona_source=llm_persona_source,
             llm_custom_persona_prompt=llm_custom_persona_prompt,
+        )
+
+    def _load_llm_prompt_expansion_config(
+        self,
+        raw_config: Any,
+    ) -> LlmPromptExpansionConfig:
+        config_dict = raw_config if isinstance(raw_config, dict) else {}
+
+        enabled = bool(config_dict.get("enabled", False))
+        llm_provider_id = str(config_dict.get("llm_provider_id") or "").strip()
+        custom_persona_prompt = str(
+            config_dict.get("custom_persona_prompt") or DEFAULT_LLM_PROMPT_EXPANSION_PERSONA
+        ).strip()
+
+        return LlmPromptExpansionConfig(
+            enabled=enabled,
+            llm_provider_id=llm_provider_id,
+            custom_persona_prompt=custom_persona_prompt,
         )
 
     @staticmethod
@@ -682,6 +719,8 @@ class ImageGatewayPlugin(Star):
             yield event.plain_result(str(exc))
             return
 
+        effective_prompt = await self._resolve_generation_prompt(event, prompt)
+
         start_message = await self._send_start_message(event, success_label)
         if start_message.sent_passively:
             start_message_sender_order = get_sender_order(self.global_send_strategy, for_start_message=True)
@@ -700,7 +739,7 @@ class ImageGatewayPlugin(Star):
             paths, _model_name, effective_send_strategy, effective_fake_forward = (
                 await self.generation_service.generate(
                 mode=mode,
-                prompt=prompt,
+                prompt=effective_prompt,
                 count=count,
                 input_images=input_images,
                 )
@@ -823,6 +862,81 @@ class ImageGatewayPlugin(Star):
             await client.call_action("delete_msg", message_id=int(message_id))
         except Exception as exc:
             logger.warning(f"撤回开始提示失败: {exc}")
+
+    async def _resolve_generation_prompt(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+    ) -> str:
+        original_prompt = str(prompt or "").strip()
+        expansion_config = getattr(
+            self,
+            "llm_prompt_expansion_config",
+            LlmPromptExpansionConfig(),
+        )
+        if not original_prompt or not expansion_config.enabled:
+            return original_prompt
+
+        expanded_prompt = await self._expand_prompt_with_llm(event, original_prompt)
+        if expanded_prompt:
+            logger.info(
+                f"LLM 提示词扩展完成，原始长度 {len(original_prompt)}，扩展后长度 {len(expanded_prompt)}"
+            )
+            return expanded_prompt
+
+        logger.warning("LLM 提示词扩展失败，回退原始提示词")
+        return original_prompt
+
+    async def _expand_prompt_with_llm(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+    ) -> str:
+        provider_id = self._resolve_llm_prompt_expansion_provider_id(event)
+        if not provider_id:
+            logger.warning("未找到可用的 LLM 提供商，无法扩展提示词")
+            return ""
+
+        system_prompt = self._resolve_llm_prompt_expansion_persona_prompt()
+        expansion_prompt = LLM_PROMPT_EXPANSION_TEMPLATE.format(prompt=prompt)
+
+        try:
+            llm_response = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=expansion_prompt,
+                system_prompt=system_prompt or None,
+            )
+        except Exception as exc:
+            logger.warning(f"LLM 提示词扩展失败: {exc}")
+            return ""
+
+        completion_text = getattr(llm_response, "completion_text", "") or ""
+        return self._clean_expanded_prompt_text(completion_text)
+
+    def _resolve_llm_prompt_expansion_provider_id(self, event: AstrMessageEvent) -> str | None:
+        configured_provider_id = self.llm_prompt_expansion_config.llm_provider_id
+        if configured_provider_id:
+            return configured_provider_id
+
+        return self._resolve_start_message_provider_id(event)
+
+    def _resolve_llm_prompt_expansion_persona_prompt(self) -> str:
+        custom_prompt = self.llm_prompt_expansion_config.custom_persona_prompt.strip()
+        if custom_prompt:
+            return custom_prompt
+        return DEFAULT_LLM_PROMPT_EXPANSION_PERSONA
+
+    @staticmethod
+    def _clean_expanded_prompt_text(text: str) -> str:
+        cleaned_text = (text or "").strip()
+        if not cleaned_text:
+            return ""
+
+        cleaned_text = cleaned_text.strip("`\"'“”‘’")
+        if cleaned_text.startswith("原始提示词"):
+            cleaned_text = re.sub(r"^原始提示词[：:]\s*", "", cleaned_text).strip()
+
+        return cleaned_text
 
     async def _build_generation_start_message(
         self,

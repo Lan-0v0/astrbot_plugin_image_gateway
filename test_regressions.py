@@ -146,10 +146,12 @@ from astrbot_plugin_image_gateway.adapters.base import GenerationError, ModelCon
 from astrbot_plugin_image_gateway.adapters.gemini import GeminiAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.openai import OpenAIAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.main import (  # noqa: E402
-    DEFAULT_START_MESSAGES,
     DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
+    DEFAULT_LLM_PROMPT_EXPANSION_PERSONA,
+    DEFAULT_START_MESSAGES,
     GenerationStartMessageConfig,
     ImageGatewayPlugin,
+    LlmPromptExpansionConfig,
     StartMessageDispatchResult,
 )
 from astrbot_plugin_image_gateway.services.fake_forward import (  # noqa: E402
@@ -572,6 +574,28 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         self.assertEqual(enabled_config.enabled, True)
         self.assertEqual(disabled_config.enabled, False)
 
+    def test_load_llm_prompt_expansion_config_uses_defaults_when_disabled(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        expansion_config = plugin_instance._load_llm_prompt_expansion_config({})
+
+        self.assertEqual(expansion_config.enabled, False)
+        self.assertEqual(expansion_config.llm_provider_id, "")
+        self.assertEqual(expansion_config.custom_persona_prompt, DEFAULT_LLM_PROMPT_EXPANSION_PERSONA)
+
+    def test_load_llm_prompt_expansion_config_reads_enabled_provider_and_persona(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        expansion_config = plugin_instance._load_llm_prompt_expansion_config(
+            {
+                "enabled": True,
+                "llm_provider_id": "provider-1",
+                "custom_persona_prompt": "  自定义扩展人设  ",
+            }
+        )
+
+        self.assertEqual(expansion_config.enabled, True)
+        self.assertEqual(expansion_config.llm_provider_id, "provider-1")
+        self.assertEqual(expansion_config.custom_persona_prompt, "自定义扩展人设")
+
 
 class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_quota_error_is_returned_before_start_message(self) -> None:
@@ -613,6 +637,96 @@ class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message_text, "")
 
+    async def test_resolve_generation_prompt_skips_expansion_when_disabled(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.llm_prompt_expansion_config = LlmPromptExpansionConfig(enabled=False)
+
+        async def fail_if_called(*args, **kwargs):
+            raise AssertionError("禁用时不应调用 LLM 扩展")
+
+        plugin_instance._expand_prompt_with_llm = fail_if_called
+
+        resolved_prompt = await plugin_instance._resolve_generation_prompt(
+            FakeEvent("/生图 测试"),
+            "一只猫",
+        )
+
+        self.assertEqual(resolved_prompt, "一只猫")
+
+    async def test_resolve_generation_prompt_uses_expanded_prompt_when_enabled(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.llm_prompt_expansion_config = LlmPromptExpansionConfig(enabled=True)
+
+        async def fake_expand_prompt_with_llm(event, prompt):
+            self.assertEqual(prompt, "一只猫")
+            return "一只橘猫坐在窗台上，阳光洒落，温暖写实风格"
+
+        plugin_instance._expand_prompt_with_llm = fake_expand_prompt_with_llm
+
+        resolved_prompt = await plugin_instance._resolve_generation_prompt(
+            FakeEvent("/生图 测试"),
+            "一只猫",
+        )
+
+        self.assertEqual(resolved_prompt, "一只橘猫坐在窗台上，阳光洒落，温暖写实风格")
+
+    async def test_resolve_generation_prompt_falls_back_to_original_when_expansion_fails(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.llm_prompt_expansion_config = LlmPromptExpansionConfig(enabled=True)
+
+        async def fake_expand_prompt_with_llm(event, prompt):
+            return ""
+
+        plugin_instance._expand_prompt_with_llm = fake_expand_prompt_with_llm
+
+        resolved_prompt = await plugin_instance._resolve_generation_prompt(
+            FakeEvent("/生图 测试"),
+            "一只猫",
+        )
+
+        self.assertEqual(resolved_prompt, "一只猫")
+
+    async def test_run_generation_passes_expanded_prompt_to_generation_service(self) -> None:
+        observed_prompts: list[str] = []
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance._refresh_services = lambda: None
+        plugin_instance.llm_prompt_expansion_config = LlmPromptExpansionConfig(enabled=True)
+
+        async def fake_resolve_generation_prompt(event, prompt):
+            return f"扩展后的{prompt}"
+
+        async def fake_generate(**kwargs):
+            observed_prompts.append(kwargs["prompt"])
+            raise GenerationError("stop after prompt capture")
+
+        plugin_instance._resolve_generation_prompt = fake_resolve_generation_prompt
+        plugin_instance.generation_service = types.SimpleNamespace(
+            _normalize_requested_count=lambda mode, count: 1,
+            validate_request_count=lambda requested_count, mode="text_to_image": None,
+            generate=fake_generate,
+        )
+        async def start_message_result(event, label):
+            return StartMessageDispatchResult(text="开始生成", message_id=None, sent_passively=False)
+
+        async def noop_retract_start_message(event, message_id):
+            return None
+
+        plugin_instance._send_start_message = start_message_result
+        plugin_instance._retract_start_message = noop_retract_start_message
+
+        results = []
+        async for result in plugin_instance._run_generation(
+            FakeEvent("/生图 测试"),
+            mode="text_to_image",
+            prompt="一只猫",
+            count=1,
+            input_images=None,
+            success_label="生图",
+        ):
+            results.append(result)
+
+        self.assertEqual(observed_prompts, ["扩展后的一只猫"])
+        self.assertEqual(results, ["stop after prompt capture"])
 
     async def test_run_generation_passes_request_mode_to_validate_request_count(self) -> None:
         observed_modes: list[str] = []
@@ -1402,6 +1516,38 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(llm_prompt_default, DEFAULT_LLM_CUSTOM_PERSONA_PROMPT)
         self.assertIn("颜文字表情", llm_prompt_default)
         self.assertIn("严禁使用emoji", llm_prompt_default)
+
+    def test_conf_schema_places_llm_prompt_expansion_between_runtime_and_start_message(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+        schema_keys = list(schema.keys())
+
+        self.assertLess(
+            schema_keys.index("workflow_runtime_default"),
+            schema_keys.index("llm_prompt_expansion"),
+        )
+        self.assertLess(
+            schema_keys.index("llm_prompt_expansion"),
+            schema_keys.index("generation_start_message"),
+        )
+
+        expansion_items = schema["llm_prompt_expansion"]["items"]
+        self.assertEqual(expansion_items["enabled"]["default"], False)
+        self.assertEqual(
+            expansion_items["llm_provider_id"]["condition"],
+            {"enabled": True},
+        )
+        self.assertEqual(
+            expansion_items["custom_persona_prompt"]["condition"],
+            {"enabled": True},
+        )
+        self.assertEqual(
+            expansion_items["llm_provider_id"]["_special"],
+            "select_provider",
+        )
+        self.assertEqual(
+            expansion_items["custom_persona_prompt"]["default"],
+            DEFAULT_LLM_PROMPT_EXPANSION_PERSONA,
+        )
 
     def test_workflow_runtime_default_timeout_matches_schema_default(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
