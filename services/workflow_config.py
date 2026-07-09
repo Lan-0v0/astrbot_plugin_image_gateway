@@ -147,7 +147,9 @@ class WorkflowConfig:
         workflow_id = str(entry.get("workflow_id") or "").strip() or str(
             entry.get("display_name") or "未命名工作流"
         ).strip()
-        display_name = workflow_id or "未命名工作流"
+        display_name = (
+            str(entry.get("display_name") or "").strip() or workflow_id or "未命名工作流"
+        )
 
         workflow_engine = _normalize_workflow_engine(
             entry.get("__template_key")
@@ -206,7 +208,11 @@ def _normalize_workflow_engine(raw_value: Any) -> str:
     return DEFAULT_WORKFLOW_ENGINE
 
 
-def _normalize_supported_modes(raw_value: Any) -> list[str]:
+def normalize_supported_modes(
+    raw_value: Any,
+    *,
+    default_modes: list[str] | None = None,
+) -> list[str]:
     if isinstance(raw_value, str) and raw_value.strip().lower() == "both":
         raw_modes = ["text_to_image", "image_to_image"]
     elif isinstance(raw_value, list):
@@ -222,7 +228,12 @@ def _normalize_supported_modes(raw_value: Any) -> list[str]:
         if mode in SUPPORTED_WORKFLOW_MODES and mode not in normalized_modes:
             normalized_modes.append(mode)
 
-    return normalized_modes or ["text_to_image"]
+    fallback_modes = default_modes or ["text_to_image"]
+    return normalized_modes or list(fallback_modes)
+
+
+def _normalize_supported_modes(raw_value: Any) -> list[str]:
+    return normalize_supported_modes(raw_value)
 
 
 def describe_mode(mode: str) -> str:

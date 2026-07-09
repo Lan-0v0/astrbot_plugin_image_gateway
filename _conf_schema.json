@@ -33,7 +33,8 @@
           "provider_label": {
             "description": "类型",
             "type": "string",
-            "default": "OpenAI"
+            "default": "OpenAI",
+            "invisible": true
           },
           "display_name": {
             "description": "显示名称",
@@ -105,6 +106,22 @@
             "type": "int",
             "default": -1
           },
+          "supported_modes": {
+            "description": "支持模式",
+            "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
+            "type": "string",
+            "default": "both",
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
+            ]
+          },
           "quality": {
             "description": "画质",
             "type": "string",
@@ -119,7 +136,7 @@
           "size": {
             "description": "尺寸",
             "type": "string",
-            "default": "1024x1024",
+            "default": "auto",
             "options": [
               "auto",
               "1024x1024",
@@ -214,7 +231,8 @@
           "provider_label": {
             "description": "类型",
             "type": "string",
-            "default": "Gemini"
+            "default": "Gemini",
+            "invisible": true
           },
           "display_name": {
             "description": "显示名称",
@@ -286,6 +304,22 @@
             "type": "int",
             "default": -1
           },
+          "supported_modes": {
+            "description": "支持模式",
+            "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
+            "type": "string",
+            "default": "both",
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
+            ]
+          },
           "quality": {
             "description": "画质/输出质量",
             "hint": "部分网关支持 quality 参数",
@@ -302,7 +336,7 @@
             "description": "尺寸/宽高比",
             "hint": "Gemini 原生接口可能忽略此字段",
             "type": "string",
-            "default": "1024x1024",
+            "default": "auto",
             "options": [
               "auto",
               "1024x1024",
@@ -369,7 +403,8 @@
           "provider_label": {
             "description": "类型",
             "type": "string",
-            "default": "阿里云百炼"
+            "default": "阿里云百炼",
+            "invisible": true
           },
           "display_name": {
             "description": "显示名称",
@@ -425,6 +460,14 @@
             "type": "int",
             "default": -1
           },
+          "supported_modes": {
+            "description": "支持模式",
+            "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
+            "type": "string",
+            "default": "both",
+            "options": ["text_to_image", "both", "image_to_image"],
+            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+          },
           "quality": {
             "description": "提示词智能改写",
             "hint": "映射为 prompt_extend；high/auto 开启，low/medium 关闭",
@@ -436,7 +479,7 @@
             "description": "尺寸",
             "hint": "DashScope 使用宽*高格式，例如 1280*1280",
             "type": "string",
-            "default": "1280*1280",
+            "default": "auto",
             "options": ["auto", "1280*1280", "1024*1024", "720*1280", "1280*720", "1536*1024", "1024*1536"]
           },
           "moderation": {
@@ -500,7 +543,7 @@
         "hint": "火山引擎方舟 Ark 图像生成（OpenAI Images 兼容协议）",
         "display_item": "display_name",
         "items": {
-          "provider_label": {"description": "类型", "type": "string", "default": "火山引擎"},
+          "provider_label": {"description": "类型", "type": "string", "default": "火山引擎", "invisible": true},
           "display_name": {"description": "显示名称", "type": "string", "default": "火山引擎模型"},
           "enabled": {"description": "启用", "type": "bool", "default": true},
           "priority_preset": {
@@ -526,11 +569,19 @@
           },
           "retry_count": {"description": "重试次数", "type": "int", "default": -1},
           "max_generation_count": {"description": "单次请求最大生成张数", "type": "int", "default": -1},
+          "supported_modes": {
+            "description": "支持模式",
+            "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
+            "type": "string",
+            "default": "both",
+            "options": ["text_to_image", "both", "image_to_image"],
+            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+          },
           "quality": {"description": "画质", "type": "string", "default": "high", "options": ["auto", "high", "medium", "low"]},
           "size": {
             "description": "尺寸",
             "type": "string",
-            "default": "1024x1024",
+            "default": "auto",
             "options": ["auto", "1024x1024", "1536x1024", "1024x1536", "2048x2048"]
           },
           "response_format": {
@@ -563,7 +614,7 @@
         "hint": "MiniMax 图像生成 API（文生图 / 图生图）",
         "display_item": "display_name",
         "items": {
-          "provider_label": {"description": "类型", "type": "string", "default": "MiniMax"},
+          "provider_label": {"description": "类型", "type": "string", "default": "MiniMax", "invisible": true},
           "display_name": {"description": "显示名称", "type": "string", "default": "MiniMax 模型"},
           "enabled": {"description": "启用", "type": "bool", "default": true},
           "priority_preset": {
@@ -589,6 +640,14 @@
           },
           "retry_count": {"description": "重试次数", "type": "int", "default": -1},
           "max_generation_count": {"description": "单次请求最大生成张数", "type": "int", "default": -1},
+          "supported_modes": {
+            "description": "支持模式",
+            "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
+            "type": "string",
+            "default": "both",
+            "options": ["text_to_image", "both", "image_to_image"],
+            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+          },
           "aspect_ratio": {
             "description": "宽高比",
             "hint": "留空 auto 时尝试使用尺寸字段",
@@ -638,7 +697,7 @@
         "hint": "智谱 CogView 图像生成（OpenAI Images 兼容协议）",
         "display_item": "display_name",
         "items": {
-          "provider_label": {"description": "类型", "type": "string", "default": "智谱"},
+          "provider_label": {"description": "类型", "type": "string", "default": "智谱", "invisible": true},
           "display_name": {"description": "显示名称", "type": "string", "default": "智谱 CogView"},
           "enabled": {"description": "启用", "type": "bool", "default": true},
           "priority_preset": {
@@ -664,11 +723,19 @@
           },
           "retry_count": {"description": "重试次数", "type": "int", "default": -1},
           "max_generation_count": {"description": "单次请求最大生成张数", "type": "int", "default": -1},
+          "supported_modes": {
+            "description": "支持模式",
+            "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
+            "type": "string",
+            "default": "both",
+            "options": ["text_to_image", "both", "image_to_image"],
+            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+          },
           "quality": {"description": "画质", "type": "string", "default": "high", "options": ["auto", "high", "medium", "low"]},
           "size": {
             "description": "尺寸",
             "type": "string",
-            "default": "1024x1024",
+            "default": "auto",
             "options": ["auto", "1024x1024", "1440x720", "720x1440"]
           },
           "seed": {"description": "随机种子", "type": "string", "default": ""},
@@ -694,7 +761,7 @@
         "hint": "腾讯混元图像生成（OpenAI Images 兼容协议）",
         "display_item": "display_name",
         "items": {
-          "provider_label": {"description": "类型", "type": "string", "default": "腾讯混元"},
+          "provider_label": {"description": "类型", "type": "string", "default": "腾讯混元", "invisible": true},
           "display_name": {"description": "显示名称", "type": "string", "default": "混元图像模型"},
           "enabled": {"description": "启用", "type": "bool", "default": true},
           "priority_preset": {
@@ -720,11 +787,19 @@
           },
           "retry_count": {"description": "重试次数", "type": "int", "default": -1},
           "max_generation_count": {"description": "单次请求最大生成张数", "type": "int", "default": -1},
+          "supported_modes": {
+            "description": "支持模式",
+            "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
+            "type": "string",
+            "default": "both",
+            "options": ["text_to_image", "both", "image_to_image"],
+            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+          },
           "quality": {"description": "画质", "type": "string", "default": "high", "options": ["auto", "high", "medium", "low"]},
           "size": {
             "description": "尺寸/宽高比",
             "type": "string",
-            "default": "1024x1024",
+            "default": "auto",
             "options": ["auto", "1024x1024", "768x1024", "1024x768", "1:1", "16:9", "9:16"]
           },
           "revision": {
@@ -760,17 +835,13 @@
     "templates": {
       "comfyui": {
         "name": "ComfyUI",
-        "hint": "工作流 ID (workflow_id)输入框中输入的内容变量",
-        "display_item": [
-          "display_summary"
-        ],
-        "hide_hint_in_list": true,
+        "hint": "显示名称 (display_name)输入框中输入的内容变量",
+        "display_item": "display_name",
         "items": {
-          "display_summary": {
-            "description": "Display Summary",
+          "display_name": {
+            "description": "显示名称",
             "type": "string",
-            "default": "",
-            "invisible": true
+            "default": "ComfyUI 工作流"
           },
           "workflow_id": {
             "description": "工作流 ID",
@@ -915,15 +986,13 @@
       },
       "a1111": {
         "name": "A1111 Stable Diffusion WebUI",
-        "hint": "工作流 ID (workflow_id)输入框中输入的内容变量",
-        "display_item": ["display_summary"],
-        "hide_hint_in_list": true,
+        "hint": "显示名称 (display_name)输入框中输入的内容变量",
+        "display_item": "display_name",
         "items": {
-          "display_summary": {
-            "description": "Display Summary",
+          "display_name": {
+            "description": "显示名称",
             "type": "string",
-            "default": "",
-            "invisible": true
+            "default": "A1111 工作流"
           },
           "workflow_id": {
             "description": "工作流 ID",
@@ -1004,6 +1073,7 @@
     "templates": {
       "binding": {
         "name": "自定义节点条目",
+        "hint": "显示名称 (display_name)——所属工作流 ID (workflow_id)",
         "display_item": [
           "display_summary"
         ],

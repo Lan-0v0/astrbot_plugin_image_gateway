@@ -110,7 +110,7 @@ class GenerationService:
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             for target in self.targets:
-                if isinstance(target, WorkflowConfig) and not target.supports_mode(mode):
+                if not target.supports_mode(mode):
                     mode_unsupported_target_count += 1
                     continue
 
@@ -236,7 +236,7 @@ class GenerationService:
         applicable_targets = [
             target
             for target in self.targets
-            if not isinstance(target, WorkflowConfig) or target.supports_mode(mode)
+            if target.supports_mode(mode)
         ]
 
         if not applicable_targets:

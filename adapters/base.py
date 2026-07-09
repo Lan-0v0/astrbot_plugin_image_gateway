@@ -48,8 +48,9 @@ class ModelConfig:
     apikey: str
     model_name: str
     quality: str = "high"
-    size: str = "1024x1024"
+    size: str = "auto"
     moderation: str = "auto"
+    supported_modes: list[str] = field(default_factory=lambda: ["text_to_image", "image_to_image"])
     seed: str = ""
     priority: int = 0
     enabled: bool = True
@@ -68,6 +69,7 @@ class ModelConfig:
         from ..services.priority import resolve_priority_value
         from ..services.fake_forward import normalize_custom_qq, parse_entry_fake_forward_mode
         from ..services.send_strategy import parse_entry_send_strategy
+        from ..services.workflow_config import normalize_supported_modes
 
         template = str(
             entry.get("__template_key")
@@ -83,8 +85,12 @@ class ModelConfig:
             apikey=str(entry.get("apikey") or "").strip(),
             model_name=str(entry.get("model_name") or "").strip(),
             quality=str(entry.get("quality") or "high"),
-            size=str(entry.get("size") or "1024x1024"),
+            size=str(entry.get("size") or "auto"),
             moderation=str(entry.get("moderation") or "auto"),
+            supported_modes=normalize_supported_modes(
+                entry.get("supported_modes"),
+                default_modes=["text_to_image", "image_to_image"],
+            ),
             seed=str(entry.get("seed") or "").strip(),
             priority=resolve_priority_value(entry, default_priority=10),
             enabled=bool(entry.get("enabled", True)),
@@ -98,3 +104,6 @@ class ModelConfig:
 
     def model_key(self) -> str:
         return f"{self.provider}|{self.display_name}|{self.url}|{self.model_name}"
+
+    def supports_mode(self, mode: str) -> bool:
+        return mode in self.supported_modes

@@ -515,6 +515,21 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
         self.assertEqual(model_config.quality, "high")
 
+    def test_model_config_defaults_size_to_auto_and_supports_both_modes(self) -> None:
+        model_config = ModelConfig.from_template_entry({"provider": "openai"})
+        self.assertEqual(model_config.size, "auto")
+        self.assertEqual(model_config.supported_modes, ["text_to_image", "image_to_image"])
+        self.assertTrue(model_config.supports_mode("text_to_image"))
+        self.assertTrue(model_config.supports_mode("image_to_image"))
+
+    def test_model_config_reads_supported_modes_from_template_entry(self) -> None:
+        model_config = ModelConfig.from_template_entry(
+            {"provider": "openai", "supported_modes": "image_to_image"}
+        )
+        self.assertEqual(model_config.supported_modes, ["image_to_image"])
+        self.assertFalse(model_config.supports_mode("text_to_image"))
+        self.assertTrue(model_config.supports_mode("image_to_image"))
+
     def test_model_config_send_strategy_defaults_to_follow_global(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
         self.assertEqual(model_config.send_strategy, "follow_global")
@@ -1327,7 +1342,8 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
 
         a1111_template = schema["workflows"]["templates"]["a1111"]
         self.assertEqual(a1111_template["name"], "A1111 Stable Diffusion WebUI")
-        self.assertEqual(a1111_template["display_item"], ["display_summary"])
+        self.assertEqual(a1111_template["display_item"], "display_name")
+        self.assertIn("display_name", a1111_template["items"])
         self.assertIn("txt2img", a1111_template["items"]["workflow_content"]["hint"])
 
     def test_conf_schema_moves_prompt_and_image_usage_help_into_binding_type_hint(self) -> None:
@@ -1382,19 +1398,20 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             ["text_to_image", "both", "image_to_image"],
         )
 
-    def test_conf_schema_uses_workflow_id_as_workflow_display_item(self) -> None:
+    def test_conf_schema_uses_display_name_as_workflow_display_item(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
         workflow_template = schema["workflows"]["templates"]["comfyui"]
         workflow_items = workflow_template["items"]
 
-        self.assertEqual(workflow_template["display_item"], ["display_summary"])
-        self.assertTrue(workflow_template["hide_hint_in_list"])
-        self.assertTrue(workflow_items["display_summary"]["invisible"])
+        self.assertEqual(workflow_template["display_item"], "display_name")
+        self.assertNotIn("hide_hint_in_list", workflow_template)
+        self.assertNotIn("display_summary", workflow_items)
         self.assertEqual(
             workflow_template["hint"],
-            "工作流 ID (workflow_id)输入框中输入的内容变量",
+            "显示名称 (display_name)输入框中输入的内容变量",
         )
+        self.assertEqual(workflow_items["display_name"]["description"], "显示名称")
         self.assertEqual(
             workflow_items["workflow_id"]["hint"],
             "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
@@ -1407,6 +1424,10 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         binding_items = binding_template["items"]
 
         self.assertEqual(binding_template["display_item"], ["display_summary"])
+        self.assertEqual(
+            binding_template["hint"],
+            "显示名称 (display_name)——所属工作流 ID (workflow_id)",
+        )
         self.assertTrue(binding_items["display_summary"]["invisible"])
         self.assertIn("CFG", binding_items["display_name"]["hint"])
 
@@ -1444,33 +1465,58 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             expected_summary,
         )
 
-    def test_plugin_normalizes_workflow_display_summary_to_workflow_id(self) -> None:
-        config_cls = sys.modules["astrbot.api"].AstrBotConfig
-        config = config_cls(
+    def test_plugin_builds_binding_display_summary_from_display_name_and_workflow_id(self) -> None:
+        summary = ImageGatewayPlugin._build_workflow_binding_display_summary(
             {
-                "workflows": [
-                    {
-                        "__template_key": "comfyui",
-                        "workflow_id": "文生图1",
-                        "display_name": "旧版显示名",
-                        "enabled": True,
-                    }
-                ]
+                "display_name": "正向提示词",
+                "workflow_id": "miaomiao文生图",
             }
         )
+        self.assertEqual(summary, "正向提示词——miaomiao文生图")
 
-        context_cls = sys.modules["astrbot.api.star"].Context
-        plugin = ImageGatewayPlugin(context_cls(), config)
+    def test_conf_schema_hides_provider_label_and_defaults_size_to_auto(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
-        workflow_entry = plugin.plugin_config["workflows"][0]
-        self.assertEqual(workflow_entry["display_summary"], "文生图1")
-        self.assertNotIn("display_name", workflow_entry)
-        self.assertIsNotNone(config.saved_config)
-        self.assertEqual(
-            config.saved_config["workflows"][0]["display_summary"],
-            "文生图1",
-        )
-        self.assertNotIn("display_name", config.saved_config["workflows"][0])
+        for template_key in (
+            "openai",
+            "gemini",
+            "dashscope",
+            "volcengine",
+            "minimax",
+            "zhipu",
+            "hunyuan",
+        ):
+            items = schema["models"]["templates"][template_key]["items"]
+            self.assertTrue(
+                items["provider_label"]["invisible"],
+                template_key,
+            )
+            self.assertEqual(items["size"]["default"], "auto", template_key)
+
+    def test_conf_schema_exposes_supported_modes_for_model_templates(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        for template_key in (
+            "openai",
+            "gemini",
+            "dashscope",
+            "volcengine",
+            "minimax",
+            "zhipu",
+            "hunyuan",
+        ):
+            supported_modes = schema["models"]["templates"][template_key]["items"]["supported_modes"]
+            self.assertEqual(
+                supported_modes["options"],
+                ["text_to_image", "both", "image_to_image"],
+                template_key,
+            )
+            self.assertEqual(
+                supported_modes["labels"],
+                ["仅文生图", "文生图 + 改图", "仅改图"],
+                template_key,
+            )
+            self.assertEqual(supported_modes["default"], "both", template_key)
 
     def test_conf_schema_exposes_fake_forward_options_for_models_and_workflows(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -1651,14 +1697,14 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(workflow_config.workflow_id, "portrait_flux")
-        self.assertEqual(workflow_config.display_name, "portrait_flux")
+        self.assertEqual(workflow_config.display_name, "My ComfyUI Workflow")
         self.assertEqual(workflow_config.kind, "workflow")
         self.assertEqual(workflow_config.send_strategy, FOLLOW_GLOBAL)
         self.assertEqual(workflow_config.fake_forward_mode, FakeForwardMode.CUSTOM_QQ.value)
         self.assertEqual(workflow_config.fake_forward_custom_qq, "778899")
         self.assertEqual(workflow_config.supported_modes, ["text_to_image"])
 
-    def test_from_template_entry_uses_workflow_id_as_display_name(self) -> None:
+    def test_from_template_entry_uses_display_name_when_provided(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
             {
                 "workflow_id": "portrait_flux",
@@ -1668,7 +1714,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         )
 
         self.assertEqual(workflow_config.workflow_id, "portrait_flux")
-        self.assertEqual(workflow_config.display_name, "portrait_flux")
+        self.assertEqual(workflow_config.display_name, "旧显示名称")
 
     def test_from_template_entry_falls_back_to_display_name_as_workflow_id(self) -> None:
         workflow_config = WorkflowConfig.from_template_entry(
@@ -2128,6 +2174,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         *,
         priority: int = 0,
         max_generation_count: int = -1,
+        supported_modes: list[str] | None = None,
     ) -> ModelConfig:
         return ModelConfig(
             provider="openai",
@@ -2137,6 +2184,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             model_name="test-model",
             priority=priority,
             max_generation_count=max_generation_count,
+            supported_modes=supported_modes or ["text_to_image", "image_to_image"],
         )
 
     async def test_workflow_and_model_targets_are_scheduled_by_priority(self) -> None:
@@ -2233,6 +2281,31 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
                 await service.generate(mode="text_to_image", prompt="测试")
 
         self.assertIn("暂不支持文生图", str(raised_error.exception))
+
+    async def test_model_target_reports_mode_mismatch_for_image_to_image_requests(self) -> None:
+        text_only_model = self.build_model(
+            "TextOnlyModel",
+            priority=10,
+            supported_modes=["text_to_image"],
+        )
+        counter = FakeCounter()
+        service = GenerationService(
+            [text_only_model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+            FakeClientSession,
+        ):
+            with self.assertRaises(GenerationError) as raised_error:
+                await service.generate(mode="image_to_image", prompt="测试", input_images=["stub-image"])
+
+        self.assertIn("暂不支持改图", str(raised_error.exception))
 
     async def test_validate_request_count_ignores_mode_mismatched_workflows(self) -> None:
         image_only_workflow = self.build_workflow(
