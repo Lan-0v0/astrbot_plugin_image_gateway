@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass, field
 from pathlib import Path
 import random
@@ -70,13 +72,14 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.0.2",
+    "2.0.3",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
         self.config = config
         self.plugin_config: dict = dict(config or {})
+        self._background_generation_tasks: set[asyncio.Task[None]] = set()
         self._normalize_plugin_config()
         self._last_image_cache_cleanup_at = 0.0
         self._refresh_services()
@@ -92,35 +95,19 @@ class ImageGatewayPlugin(Star):
                 if workflow_id and "display_name" in entry:
                     entry.pop("display_name", None)
                     changed = True
-                if entry.get("display_summary") != workflow_id:
-                    entry["display_summary"] = workflow_id
+                if "display_summary" in entry:
+                    entry.pop("display_summary", None)
                     changed = True
+
         raw_bindings = self.plugin_config.get("workflow_node_bindings")
         if isinstance(raw_bindings, list):
             for entry in raw_bindings:
-                if not isinstance(entry, dict):
-                    continue
-                display_summary = self._build_workflow_binding_display_summary(entry)
-                if entry.get("display_summary") != display_summary:
-                    entry["display_summary"] = display_summary
+                if isinstance(entry, dict) and "display_summary" in entry:
+                    entry.pop("display_summary", None)
                     changed = True
 
         if changed:
             self._persist_plugin_config()
-
-    @staticmethod
-    def _build_workflow_binding_display_summary(entry: dict[str, Any]) -> str:
-        display_name = str(entry.get("display_name") or "").strip()
-        workflow_id = str(entry.get("workflow_id") or "").strip()
-
-        if display_name and workflow_id:
-            return f"{display_name}——{workflow_id}"
-        if display_name:
-            return display_name
-        if workflow_id:
-            return workflow_id
-        return ""
-
     def _persist_plugin_config(self) -> None:
         save_config = getattr(self.config, "save_config", None)
         if callable(save_config):
@@ -787,6 +774,89 @@ class ImageGatewayPlugin(Star):
         ):
             yield result
 
+    def _schedule_background_generation(
+        self,
+        event: AstrMessageEvent,
+        *,
+        mode: str,
+        prompt: str,
+        count: int,
+        input_images: list[str] | None,
+        success_label: str,
+    ) -> None:
+        task = asyncio.create_task(
+            self._run_generation_in_background(
+                event,
+                mode=mode,
+                prompt=prompt,
+                count=count,
+                input_images=input_images,
+                success_label=success_label,
+            )
+        )
+        background_tasks = getattr(self, "_background_generation_tasks", None)
+        if background_tasks is None:
+            background_tasks = set()
+            self._background_generation_tasks = background_tasks
+        background_tasks.add(task)
+        task.add_done_callback(self._on_background_generation_task_done)
+
+    def _on_background_generation_task_done(self, task: asyncio.Task[None]) -> None:
+        background_tasks = getattr(self, "_background_generation_tasks", None)
+        if isinstance(background_tasks, set):
+            background_tasks.discard(task)
+
+        if task.cancelled():
+            logger.warning("自然语言图像生成后台任务已取消")
+            return
+
+        try:
+            task.result()
+        except Exception as exc:
+            logger.error(f"自然语言图像生成后台任务异常: {exc}")
+
+    async def _run_generation_in_background(
+        self,
+        event: AstrMessageEvent,
+        *,
+        mode: str,
+        prompt: str,
+        count: int,
+        input_images: list[str] | None,
+        success_label: str,
+    ) -> None:
+        async for result in self._run_generation(
+            event,
+            mode=mode,
+            prompt=prompt,
+            count=count,
+            input_images=input_images,
+            success_label=success_label,
+        ):
+            await self._send_background_generation_result(event, result)
+
+    async def _send_background_generation_result(
+        self,
+        event: AstrMessageEvent,
+        result: Any,
+    ) -> None:
+        if isinstance(result, str):
+            chain_components = [Comp.Plain(result)]
+        else:
+            chain_components = list(getattr(result, "chain", []) or [])
+
+        if not chain_components:
+            logger.warning("自然语言图像生成后台任务返回了空消息，无法主动发送")
+            return
+
+        sender_order = get_sender_order(self.global_send_strategy)
+        if not await self._send_message_chain_directly(
+            event,
+            chain_components,
+            sender_order=sender_order,
+        ):
+            logger.error("自然语言图像生成后台任务消息发送失败")
+
     async def _send_start_message(
         self,
         event: AstrMessageEvent,
@@ -1279,12 +1349,12 @@ class ImageGatewayPlugin(Star):
                 return
 
         label = "生图" if mode_value == "text_to_image" else "改图"
-        async for result in self._run_generation(
+        self._schedule_background_generation(
             event,
             mode=mode_value,
             prompt=prompt,
             count=max(1, int(count or 1)),
             input_images=input_images,
             success_label=label,
-        ):
-            yield result
+        )
+        yield "图像生成任务已提交，结果将自动发送给用户，无需再次回复。"

@@ -651,6 +651,64 @@ class StartMessageOrderRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(results, ["超出生成张数上限"])
 
+    async def test_natural_language_tool_schedules_background_generation_immediately(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.enable_nl_trigger = True
+        scheduled_requests = []
+
+        def schedule_background_generation(event, **kwargs):
+            scheduled_requests.append((event, kwargs))
+
+        plugin_instance._schedule_background_generation = schedule_background_generation
+        event = FakeEvent("请生成一只猫")
+
+        results = []
+        async for result in plugin_instance.image_gateway_generate_tool(
+            event,
+            prompt="一只猫",
+            mode="text_to_image",
+            count=1,
+        ):
+            results.append(result)
+
+        self.assertEqual(
+            results,
+            ["图像生成任务已提交，结果将自动发送给用户，无需再次回复。"],
+        )
+        self.assertEqual(len(scheduled_requests), 1)
+        self.assertIs(scheduled_requests[0][0], event)
+        self.assertEqual(scheduled_requests[0][1]["mode"], "text_to_image")
+        self.assertEqual(scheduled_requests[0][1]["prompt"], "一只猫")
+
+    async def test_background_generation_directly_sends_fallback_results(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.global_send_strategy = SendStrategy.DIRECT_FIRST
+        delivered_chains = []
+
+        async def fake_run_generation(*args, **kwargs):
+            yield "后台生成失败"
+
+        async def fake_send_message_chain_directly(event, chain_components, *, sender_order):
+            delivered_chains.append((chain_components, sender_order))
+            return True
+
+        plugin_instance._run_generation = fake_run_generation
+        plugin_instance._send_message_chain_directly = fake_send_message_chain_directly
+
+        await plugin_instance._run_generation_in_background(
+            FakeEvent("请生成一只猫"),
+            mode="text_to_image",
+            prompt="一只猫",
+            count=1,
+            input_images=None,
+            success_label="生图",
+        )
+
+        self.assertEqual(delivered_chains[0][0][0].text, "后台生成失败")
+        self.assertEqual(
+            delivered_chains[0][1],
+            get_sender_order(SendStrategy.DIRECT_FIRST),
+        )
     async def test_build_generation_start_message_returns_empty_when_disabled(self) -> None:
         plugin_instance = object.__new__(ImageGatewayPlugin)
         plugin_instance.start_message_config = GenerationStartMessageConfig(enabled=False)
@@ -1342,9 +1400,8 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
 
         a1111_template = schema["workflows"]["templates"]["a1111"]
         self.assertEqual(a1111_template["name"], "A1111 Stable Diffusion WebUI")
-        self.assertEqual(a1111_template["display_item"], ["display_summary"])
+        self.assertEqual(a1111_template["display_item"], ["workflow_id"])
         self.assertTrue(a1111_template["hide_hint_in_list"])
-        self.assertTrue(a1111_template["items"]["display_summary"]["invisible"])
         self.assertNotIn("display_name", a1111_template["items"])
         self.assertIn("txt2img", a1111_template["items"]["workflow_content"]["hint"])
 
@@ -1407,27 +1464,28 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             workflow_template = schema["workflows"]["templates"][template_key]
             workflow_items = workflow_template["items"]
 
-            self.assertEqual(workflow_template["display_item"], ["display_summary"])
+            self.assertEqual(workflow_template["display_item"], ["workflow_id"])
             self.assertTrue(workflow_template["hide_hint_in_list"])
             self.assertNotIn("hint", workflow_template)
-            self.assertTrue(workflow_items["display_summary"]["invisible"])
+            self.assertNotIn("display_summary", workflow_items)
             self.assertNotIn("display_name", workflow_items)
             self.assertEqual(
                 workflow_items["workflow_id"]["hint"],
                 "用于关联下方“工作流自定义节点条目”，可输入任意中文/英文/符号作为名称。",
             )
-    def test_conf_schema_uses_plugin_managed_binding_display_summary(self) -> None:
+    def test_conf_schema_uses_direct_binding_display_fields(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
         binding_template = schema["workflow_node_bindings"]["templates"]["binding"]
         binding_items = binding_template["items"]
 
-        self.assertEqual(binding_template["display_item"], ["display_summary"])
+        self.assertEqual(binding_template["display_item"], ["display_name", "workflow_id"])
+        self.assertEqual(binding_template["display_item_separator"], "——")
         self.assertTrue(binding_template["hide_hint_in_list"])
         self.assertNotIn("hint", binding_template)
-        self.assertTrue(binding_items["display_summary"]["invisible"])
+        self.assertNotIn("display_summary", binding_items)
         self.assertIn("CFG", binding_items["display_name"]["hint"])
-    def test_plugin_normalizes_workflow_display_summary_to_workflow_id(self) -> None:
+    def test_plugin_removes_legacy_workflow_display_fields(self) -> None:
         config_cls = sys.modules["astrbot.api"].AstrBotConfig
         config = config_cls(
             {
@@ -1436,6 +1494,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
                         "__template_key": "comfyui",
                         "workflow_id": "miaomiao文生图",
                         "display_name": "旧版显示名",
+                        "display_summary": "旧工作流摘要",
                         "enabled": True,
                     }
                 ]
@@ -1446,23 +1505,22 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         plugin = ImageGatewayPlugin(context_cls(), config)
 
         workflow_entry = plugin.plugin_config["workflows"][0]
-        self.assertEqual(workflow_entry["display_summary"], "miaomiao文生图")
+        self.assertEqual(workflow_entry["workflow_id"], "miaomiao文生图")
         self.assertNotIn("display_name", workflow_entry)
+        self.assertNotIn("display_summary", workflow_entry)
         self.assertIsNotNone(config.saved_config)
-        self.assertEqual(
-            config.saved_config["workflows"][0]["display_summary"],
-            "miaomiao文生图",
-        )
         self.assertNotIn("display_name", config.saved_config["workflows"][0])
-    def test_plugin_normalizes_binding_display_summary_and_persists_config(self) -> None:
+        self.assertNotIn("display_summary", config.saved_config["workflows"][0])
+    def test_plugin_removes_legacy_binding_display_summary_and_persists_config(self) -> None:
         config_cls = sys.modules["astrbot.api"].AstrBotConfig
         config = config_cls(
             {
                 "workflow_node_bindings": [
                     {
                         "__template_key": "binding",
-                        "display_name": "?????",
-                        "workflow_id": "miaomiao??",
+                        "display_name": "正向提示词",
+                        "workflow_id": "miaomiao文生图",
+                        "display_summary": "旧节点摘要",
                         "node_id": "85",
                         "field_path": "inputs.text",
                         "binding_type": "prompt_positive",
@@ -1475,28 +1533,14 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         plugin = ImageGatewayPlugin(context_cls(), config)
 
         binding_entry = plugin.plugin_config["workflow_node_bindings"][0]
-        expected_summary = plugin._build_workflow_binding_display_summary(
-            {
-                "display_name": "?????",
-                "workflow_id": "miaomiao??",
-            }
-        )
-        self.assertEqual(binding_entry["display_summary"], expected_summary)
+        self.assertEqual(binding_entry["display_name"], "正向提示词")
+        self.assertEqual(binding_entry["workflow_id"], "miaomiao文生图")
+        self.assertNotIn("display_summary", binding_entry)
         self.assertIsNotNone(config.saved_config)
-        self.assertEqual(
-            config.saved_config["workflow_node_bindings"][0]["display_summary"],
-            expected_summary,
+        self.assertNotIn(
+            "display_summary",
+            config.saved_config["workflow_node_bindings"][0],
         )
-
-    def test_plugin_builds_binding_display_summary_from_display_name_and_workflow_id(self) -> None:
-        summary = ImageGatewayPlugin._build_workflow_binding_display_summary(
-            {
-                "display_name": "正向提示词",
-                "workflow_id": "miaomiao文生图",
-            }
-        )
-        self.assertEqual(summary, "正向提示词——miaomiao文生图")
-
     def test_conf_schema_hides_provider_label_and_defaults_size_to_auto(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 

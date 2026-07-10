@@ -1,3 +1,9 @@
+## v2.0.3
+
+- 自然语言生图改为插件内后台任务：工具调用即时返回，ComfyUI 工作流继续按自身超时配置执行，完成后自动发送结果
+- Dashboard 模板列表新增通用多字段展示支持；工作流条目直接显示 `workflow_id`，自定义节点条目实时显示 `display_name——workflow_id`
+- 移除不兼容当前 Dashboard 的 `display_summary` 数组展示方案，并在启动时清理旧配置遗留字段
+- 更新回归测试并同步版本信息
 ## v2.0.2
 
 - 「工作流（Workflow）列表」移除条目中的「显示名称 (display_name)」字段，卡片副标题恢复为工作流 ID (workflow_id) 的实际内容
