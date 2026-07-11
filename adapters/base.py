@@ -4,6 +4,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ..utils.commands import normalize_dedicated_command
+from ..utils.config import parse_bool, parse_int
+
 Mode = Literal["text_to_image", "image_to_image"]
 
 _SAFETY_ERROR_PATTERN = re.compile(
@@ -57,6 +60,7 @@ class ModelConfig:
     retry_count: int = -1
     max_generation_count: int = -1
     send_strategy: str = "follow_global"
+    dedicated_command: str = ""
     fake_forward_mode: str = "follow_global"
     fake_forward_custom_qq: str = ""
     kind: str = "model"
@@ -93,10 +97,11 @@ class ModelConfig:
             ),
             seed=str(entry.get("seed") or "").strip(),
             priority=resolve_priority_value(entry, default_priority=10),
-            enabled=bool(entry.get("enabled", True)),
-            retry_count=int(entry.get("retry_count", -1)),
-            max_generation_count=int(entry.get("max_generation_count", -1)),
+            enabled=parse_bool(entry.get("enabled"), True),
+            retry_count=parse_int(entry.get("retry_count"), -1),
+            max_generation_count=parse_int(entry.get("max_generation_count"), -1),
             send_strategy=parse_entry_send_strategy(entry.get("send_strategy")),
+            dedicated_command=normalize_dedicated_command(entry.get("dedicated_command")),
             fake_forward_mode=parse_entry_fake_forward_mode(entry.get("fake_forward_mode")),
             fake_forward_custom_qq=normalize_custom_qq(entry.get("fake_forward_custom_qq")),
             raw=entry,

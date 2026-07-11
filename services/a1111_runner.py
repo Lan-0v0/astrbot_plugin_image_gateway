@@ -94,7 +94,11 @@ class A1111WorkflowRunner:
 
         payload.setdefault("batch_size", 1)
         payload.setdefault("n_iter", 1)
-        payload["batch_size"] = max(1, min(count, int(payload.get("batch_size") or 1)))
+        try:
+            batch_size = int(payload.get("batch_size") or 1)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise GenerationError("A1111 batch_size 必须是整数") from exc
+        payload["batch_size"] = max(1, min(count, batch_size))
         payload["n_iter"] = 1
 
         url = f"{runtime_config.base_url}/sdapi/v1/{endpoint}"
@@ -144,12 +148,15 @@ class A1111WorkflowRunner:
     def _strip_data_url(value: str) -> str:
         raw = (value or "").strip()
         if raw.startswith("data:image/") and "," in raw:
-            return raw.split(",", 1)[-1]
+            raw = raw.split(",", 1)[-1]
+        normalized_raw = "".join(raw.split())
         try:
-            base64.b64decode(raw, validate=True)
+            image_bytes = base64.b64decode(normalized_raw, validate=True)
         except (ValueError, binascii.Error) as exc:
             raise GenerationError("输入图片不是有效的 base64 数据") from exc
-        return raw
+        if not image_bytes:
+            raise GenerationError("输入图片不是有效的 base64 数据")
+        return normalized_raw
 
     async def _post_json(
         self,

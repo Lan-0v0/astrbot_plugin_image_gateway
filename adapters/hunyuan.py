@@ -4,7 +4,7 @@ from pathlib import Path
 
 import aiohttp
 
-from .base import GenerationError, ModelConfig
+from .base import GenerationError, ModelConfig, SensitiveContentError
 from .openai import OpenAIAdapter
 
 
@@ -50,6 +50,8 @@ class HunyuanAdapter:
                 output_dir,
                 session,
             )
+        except SensitiveContentError:
+            raise
         except GenerationError:
             return await adapter._text_to_image_via_chat(
                 prompt,

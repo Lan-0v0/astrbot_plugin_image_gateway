@@ -20,6 +20,7 @@ from .send_strategy import (
 from .workflow_config import WorkflowConfig, WorkflowNodeBinding, WorkflowRuntimeConfig, describe_mode
 from .a1111_runner import A1111WorkflowRunner
 from .workflow_runner import ComfyUIWorkflowRunner
+from ..utils.config import parse_int
 
 Mode = Literal["text_to_image", "image_to_image"]
 
@@ -82,8 +83,10 @@ class GenerationService:
         return cls(
             enabled_targets,
             workflow_node_bindings,
-            global_retry_count=int(config.get("global_retry_count", 2) or 2),
-            global_max_generation_count=int(config.get("global_max_generation_count", 2) or 2),
+            global_retry_count=parse_int(config.get("global_retry_count"), 2) or 2,
+            global_max_generation_count=parse_int(
+                config.get("global_max_generation_count"), 2
+            ) or 2,
             output_dir=output_dir,
             counter=counter,
             global_send_strategy=parse_global_send_strategy(config.get("send_strategy")),
@@ -98,18 +101,30 @@ class GenerationService:
         prompt: str,
         count: int = 1,
         input_images: list[str] | None = None,
+        dedicated_command: str | None = None,
     ) -> tuple[list[Path], str, SendStrategy, FakeForwardConfig]:
+        targets = self._select_targets(dedicated_command)
         requested_count = self._normalize_requested_count(mode, count)
-        self.validate_request_count(requested_count, mode=mode)
+        self.validate_request_count(
+            requested_count, mode=mode, dedicated_command=dedicated_command
+        )
 
         execution_errors: list[str] = []
         had_sensitive = False
         quota_exhausted_target_count = 0
         mode_unsupported_target_count = 0
-        timeout = aiohttp.ClientTimeout(total=180)
+        workflow_timeout = max(
+            (
+                target.resolve_runtime_config(self.workflow_runtime_default).timeout_seconds
+                for target in targets
+                if isinstance(target, WorkflowConfig)
+            ),
+            default=0,
+        )
+        timeout = aiohttp.ClientTimeout(total=max(180, workflow_timeout + 30))
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            for target in self.targets:
+            for target in targets:
                 if not target.supports_mode(mode):
                     mode_unsupported_target_count += 1
                     continue
@@ -171,10 +186,10 @@ class GenerationService:
         if had_sensitive:
             raise SensitiveContentError(mode)
 
-        if self.targets and quota_exhausted_target_count == len(self.targets):
+        if targets and quota_exhausted_target_count == len(targets):
             raise GenerationError("超出生成张数上限")
 
-        if self.targets and mode_unsupported_target_count == len(self.targets):
+        if targets and mode_unsupported_target_count == len(targets):
             raise GenerationError(
                 f"已启用的工作流暂不支持{describe_mode(mode)}，请配置支持对应模式的模型或工作流"
             )
@@ -229,13 +244,20 @@ class GenerationService:
             return await adapter.text_to_image(prompt, requested_count, target, self.output_dir, session)
         return await adapter.image_to_image(prompt, input_images or [], target, self.output_dir, session)
 
-    def validate_request_count(self, requested_count: int, *, mode: Mode = "text_to_image") -> None:
-        if not self.targets:
-            raise GenerationError("未配置任何已启用的图像目标")
+    def validate_request_count(
+        self,
+        requested_count: int,
+        *,
+        mode: Mode = "text_to_image",
+        dedicated_command: str | None = None,
+    ) -> None:
+        targets = self._select_targets(dedicated_command)
+        if not targets:
+            raise GenerationError("默认指令没有可用的图像目标")
 
         applicable_targets = [
             target
-            for target in self.targets
+            for target in targets
             if target.supports_mode(mode)
         ]
 
@@ -246,6 +268,18 @@ class GenerationService:
             return
 
         raise GenerationError("超出生成张数上限")
+
+    def _select_targets(self, dedicated_command: str | None) -> list[GenerationTarget]:
+        if dedicated_command:
+            targets = [
+                target
+                for target in self.targets
+                if target.dedicated_command == dedicated_command
+            ]
+            if not targets:
+                raise GenerationError(f"未找到专属指令 /{dedicated_command} 对应的图像目标")
+            return targets
+        return [target for target in self.targets if not target.dedicated_command]
 
     @staticmethod
     def _normalize_requested_count(mode: Mode, count: int) -> int:

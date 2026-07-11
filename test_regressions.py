@@ -4,12 +4,13 @@ import asyncio
 import json
 import os
 import sys
+from tempfile import TemporaryDirectory
 import types
 import time
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 def install_astrbot_test_stubs() -> None:
@@ -98,7 +99,12 @@ def install_astrbot_test_stubs() -> None:
 
         return decorator
 
+    class DummyCustomFilter:
+        def __init__(self, raise_error: bool = True, **kwargs):
+            self.raise_error = raise_error
+
     class DummyFilterProxy:
+        CustomFilter = DummyCustomFilter
         def __getattr__(self, name):
             def decorator_factory(*args, **kwargs):
                 def decorator(target):
@@ -143,7 +149,7 @@ repository_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(repository_root.parent))
 
 from astrbot_plugin_image_gateway.adapters import get_adapter  # noqa: E402
-from astrbot_plugin_image_gateway.adapters.base import GenerationError, ModelConfig  # noqa: E402
+from astrbot_plugin_image_gateway.adapters.base import GenerationError, ModelConfig, SensitiveContentError  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.dashscope import DashScopeAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.gemini import GeminiAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.minimax import MiniMaxAdapter  # noqa: E402
@@ -152,6 +158,7 @@ from astrbot_plugin_image_gateway.adapters.hunyuan import HunyuanAdapter  # noqa
 from astrbot_plugin_image_gateway.adapters.volcengine import VolcengineAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.zhipu import ZhipuAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.main import (  # noqa: E402
+    DedicatedCommandFilter,
     DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
     DEFAULT_LLM_PROMPT_EXPANSION_PERSONA,
     DEFAULT_START_MESSAGES,
@@ -159,6 +166,7 @@ from astrbot_plugin_image_gateway.main import (  # noqa: E402
     ImageGatewayPlugin,
     LlmPromptExpansionConfig,
     StartMessageDispatchResult,
+    _replace_dedicated_command_names,
 )
 from astrbot_plugin_image_gateway.services.fake_forward import (  # noqa: E402
     FOLLOW_GLOBAL as FAKE_FORWARD_FOLLOW_GLOBAL,
@@ -169,6 +177,7 @@ from astrbot_plugin_image_gateway.services.fake_forward import (  # noqa: E402
     resolve_effective_fake_forward,
 )
 from astrbot_plugin_image_gateway.services.generation import GenerationService  # noqa: E402
+from astrbot_plugin_image_gateway.services.counter import GenerationCounter  # noqa: E402
 from astrbot_plugin_image_gateway.services.image_cache import (  # noqa: E402
     DEFAULT_IMAGE_CACHE_CLEANUP_DAYS,
     cleanup_expired_image_cache,
@@ -190,7 +199,12 @@ from astrbot_plugin_image_gateway.services.workflow_config import (  # noqa: E40
 from astrbot_plugin_image_gateway.services.workflow_merge import merge_workflow_payload  # noqa: E402
 from astrbot_plugin_image_gateway.services.a1111_runner import A1111WorkflowRunner  # noqa: E402
 from astrbot_plugin_image_gateway.services.workflow_runner import ComfyUIWorkflowRunner  # noqa: E402
+from astrbot_plugin_image_gateway.utils.commands import (
+    normalize_dedicated_command,
+    parse_dedicated_command_text,
+)  # noqa: E402
 from astrbot_plugin_image_gateway.utils.json_path import get_by_dot_path, set_by_dot_path  # noqa: E402
+from astrbot_plugin_image_gateway.utils.storage import save_base64_image  # noqa: E402
 from astrbot_plugin_image_gateway.utils.messages import parse_command_text  # noqa: E402
 
 
@@ -237,6 +251,13 @@ class FakeEvent:
         self._sender_name = sender_name
         self._platform_id = platform_id
         self._platform_name = platform_name
+        self.stopped = False
+
+    def get_message_str(self):
+        return self.message_str
+
+    def stop_event(self):
+        self.stopped = True
 
     def plain_result(self, text: str):
         return text
@@ -2913,6 +2934,353 @@ class A1111SchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(target_name, "a1111-route")
         self.assertEqual(paths, [Path("routed.png")])
+
+
+
+class InputValidationRegressionTests(unittest.TestCase):
+    def test_parse_count_ignores_oversized_numeric_suffix(self) -> None:
+        from astrbot_plugin_image_gateway.utils.messages import parse_count_and_prompt
+
+        oversized_count = "9" * 5000
+        self.assertEqual(
+            parse_count_and_prompt(f"a prompt {oversized_count}"),
+            (f"a prompt {oversized_count}", 1),
+        )
+
+    def test_dot_path_rejects_negative_list_index(self) -> None:
+        with self.assertRaises(IndexError):
+            get_by_dot_path({"items": ["only"]}, "items.-1")
+
+    def test_config_parsing_handles_invalid_numbers_and_boolean_strings(self) -> None:
+        model = ModelConfig.from_template_entry(
+            {
+                "enabled": "false",
+                "retry_count": "invalid",
+                "max_generation_count": "invalid",
+                "priority": "invalid",
+            }
+        )
+        workflow = WorkflowConfig.from_template_entry(
+            {
+                "enabled": "false",
+                "retry_count": "invalid",
+                "max_generation_count": "invalid",
+                "priority": "invalid",
+            }
+        )
+        runtime = WorkflowRuntimeConfig.from_raw(
+            {"poll_interval_seconds": 0, "timeout_seconds": 0}
+        )
+        service = GenerationService.from_config(
+            {"global_retry_count": "invalid", "global_max_generation_count": "invalid"},
+            Path("."),
+            FakeCounter(),
+        )
+
+        self.assertFalse(model.enabled)
+        self.assertEqual((model.retry_count, model.max_generation_count, model.priority), (-1, -1, 10))
+        self.assertFalse(workflow.enabled)
+        self.assertEqual((workflow.retry_count, workflow.max_generation_count, workflow.priority), (-1, -1, 10))
+        self.assertEqual((runtime.poll_interval_seconds, runtime.timeout_seconds), (1.0, 300))
+        self.assertEqual((service.global_retry_count, service.global_max_generation_count), (2, 2))
+
+
+class GenerationCounterConcurrencyRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_concurrent_updates_are_persisted_atomically(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            counter_file = Path(temp_dir) / "counts.json"
+            counter = GenerationCounter(counter_file)
+            await asyncio.gather(*(counter.add_count("model", 1) for _ in range(20)))
+
+            self.assertEqual(await counter.get_count("model"), 20)
+            self.assertEqual(json.loads(counter_file.read_text(encoding="utf-8")), {"model": 20})
+
+
+class ImageStorageValidationRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_save_base64_image_rejects_invalid_data_and_accepts_data_urls(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            with self.assertRaises(ValueError):
+                await save_base64_image("not-valid-base64", Path(temp_dir))
+
+            image_path = await save_base64_image(
+                "data:image/png;base64,aGVsbG8=",
+                Path(temp_dir),
+            )
+            self.assertEqual(image_path.read_bytes(), b"hello")
+
+
+class ProviderFallbackSafetyRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_compatible_adapter_does_not_bypass_sensitive_content_error(self) -> None:
+        model = ModelConfig(
+            provider="hunyuan",
+            display_name="Hunyuan",
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name="test-model",
+        )
+        fallback = AsyncMock()
+        with (
+            patch.object(
+                OpenAIAdapter,
+                "image_to_image",
+                AsyncMock(side_effect=SensitiveContentError("image_to_image")),
+            ),
+            patch.object(OpenAIAdapter, "_text_to_image_via_chat", fallback),
+        ):
+            with self.assertRaises(SensitiveContentError):
+                await HunyuanAdapter().image_to_image(
+                    "test", ["aGVsbG8="], model, Path("."), FakeClientSession()
+                )
+
+        fallback.assert_not_awaited()
+
+
+class WorkflowTimeoutRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generation_session_allows_configured_workflow_timeout(self) -> None:
+        workflow = WorkflowConfig.from_template_entry(
+            {"workflow_id": "slow-workflow", "workflow_content": "{}"}
+        )
+        service = GenerationService(
+            [workflow],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+            workflow_runtime_default=WorkflowRuntimeConfig(timeout_seconds=300),
+        )
+        captured_sessions: list[FakeClientSession] = []
+
+        class CapturingSession(FakeClientSession):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured_sessions.append(self)
+
+        with (
+            patch.object(service, "_invoke_target", AsyncMock(return_value=[Path("image.png")])),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                CapturingSession,
+            ),
+        ):
+            await service.generate(mode="text_to_image", prompt="test")
+
+        self.assertEqual(captured_sessions[0].kwargs["timeout"].total, 330)
+
+
+class ComfyUIFailureStatusRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_history_error_is_reported_without_waiting_for_timeout(self) -> None:
+        class ErrorSession:
+            def get(self, *args, **kwargs):
+                return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(
+                    json_data={
+                        "prompt-123": {
+                            "status": {
+                                "status_str": "error",
+                                "messages": [["execution_error", {"exception_message": "node failed"}]],
+                            }
+                        }
+                    }
+                )
+
+        with self.assertRaisesRegex(GenerationError, "node failed"):
+            await ComfyUIWorkflowRunner()._wait_for_history(
+                ErrorSession(),
+                "http://127.0.0.1:8188",
+                {},
+                "prompt-123",
+                timeout_seconds=1,
+                poll_interval_seconds=0,
+            )
+
+
+class A1111InputValidationRegressionTests(unittest.TestCase):
+    def test_data_url_input_requires_valid_base64(self) -> None:
+        with self.assertRaises(GenerationError):
+            A1111WorkflowRunner._strip_data_url("data:image/png;base64,not-valid")
+
+
+class DedicatedCommandParsingRegressionTests(unittest.TestCase):
+    def test_normalize_and_parse_dedicated_command(self) -> None:
+        self.assertEqual(normalize_dedicated_command(" /基米生图 "), "基米生图")
+        self.assertEqual(normalize_dedicated_command("生图"), "")
+        self.assertEqual(normalize_dedicated_command("包含 空格"), "")
+        self.assertEqual(
+            parse_dedicated_command_text("/基米生图，画一只猫"),
+            ("基米生图", "画一只猫"),
+        )
+
+    def test_model_and_workflow_read_dedicated_command(self) -> None:
+        model = ModelConfig.from_template_entry(
+            {"__template_key": "gemini", "dedicated_command": "/基米生图"}
+        )
+        workflow = WorkflowConfig.from_template_entry(
+            {"workflow_id": "demo", "dedicated_command": "工作流绘图"}
+        )
+        self.assertEqual(model.dedicated_command, "基米生图")
+        self.assertEqual(workflow.dedicated_command, "工作流绘图")
+
+    def test_schema_places_empty_dedicated_command_before_fake_forward(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+        templates = {
+            **schema["models"]["templates"],
+            **schema["workflows"]["templates"],
+        }
+        for template_name, template in templates.items():
+            with self.subTest(template=template_name):
+                items = template["items"]
+                keys = list(items)
+                self.assertIn("dedicated_command", items)
+                self.assertEqual(items["dedicated_command"]["description"], "专属指令")
+                self.assertEqual(items["dedicated_command"]["default"], "")
+                self.assertEqual(
+                    keys.index("dedicated_command") + 1,
+                    keys.index("fake_forward_mode"),
+                )
+
+
+class DedicatedCommandSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def build_model(name: str, dedicated_command: str = "") -> ModelConfig:
+        return ModelConfig(
+            provider="openai",
+            display_name=name,
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name=name,
+            dedicated_command=dedicated_command,
+        )
+
+    async def test_default_and_dedicated_commands_use_separate_targets(self) -> None:
+        dedicated_target = self.build_model("Gemini", "基米生图")
+        default_target = self.build_model("Default")
+        service = GenerationService(
+            [dedicated_target, default_target],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=2,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        invoked_targets: list[str] = []
+
+        async def invoke(target, **kwargs):
+            invoked_targets.append(target.display_name)
+            return [Path(f"{target.display_name}.png")]
+
+        with (
+            patch.object(service, "_invoke_target", invoke),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            default_paths, default_name, *_ = await service.generate(
+                mode="text_to_image", prompt="default"
+            )
+            dedicated_paths, dedicated_name, *_ = await service.generate(
+                mode="text_to_image",
+                prompt="dedicated",
+                dedicated_command="基米生图",
+            )
+
+        self.assertEqual(invoked_targets, ["Default", "Gemini"])
+        self.assertEqual((default_name, default_paths), ("Default", [Path("Default.png")]))
+        self.assertEqual((dedicated_name, dedicated_paths), ("Gemini", [Path("Gemini.png")]))
+
+    async def test_default_command_fails_when_every_target_is_dedicated(self) -> None:
+        service = GenerationService(
+            [self.build_model("Gemini", "基米生图")],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=2,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        with self.assertRaisesRegex(GenerationError, "默认指令没有可用"):
+            await service.generate(mode="text_to_image", prompt="test")
+
+
+class DedicatedCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self) -> None:
+        _replace_dedicated_command_names(set())
+
+    @staticmethod
+    def build_target(command: str = "基米生图") -> ModelConfig:
+        return ModelConfig(
+            provider="gemini",
+            display_name="Gemini",
+            url="https://example.com",
+            apikey="test-key",
+            model_name="gemini-image",
+            dedicated_command=command,
+        )
+
+    async def test_handler_routes_text_request_and_count_to_dedicated_target(self) -> None:
+        plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
+        target = self.build_target()
+        plugin._dedicated_targets_by_command = {"基米生图": target}
+        plugin._dedicated_command_conflicts = set()
+        captured: dict[str, Any] = {}
+
+        async def run_generation(event, **kwargs):
+            captured.update(kwargs)
+            yield event.plain_result("done")
+
+        plugin._run_generation = run_generation
+        event = FakeEvent("/基米生图 画一只猫 2")
+        results = [result async for result in plugin.dedicated_command(event)]
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(results, ["done"])
+        self.assertEqual(captured["mode"], "text_to_image")
+        self.assertEqual(captured["prompt"], "画一只猫")
+        self.assertEqual(captured["count"], 2)
+        self.assertEqual(captured["dedicated_command"], "基米生图")
+
+    async def test_handler_uses_image_to_image_when_message_contains_image(self) -> None:
+        plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
+        target = self.build_target()
+        plugin._dedicated_targets_by_command = {"基米生图": target}
+        plugin._dedicated_command_conflicts = set()
+        captured: dict[str, Any] = {}
+
+        async def run_generation(event, **kwargs):
+            captured.update(kwargs)
+            yield event.plain_result("done")
+
+        plugin._run_generation = run_generation
+        event = FakeEvent("基米生图 改成油画")
+        event.message_obj = types.SimpleNamespace(
+            message=[sys.modules["astrbot.api.all"].Image()]
+        )
+        results = [result async for result in plugin.dedicated_command(event)]
+
+        self.assertEqual(results, ["done"])
+        self.assertEqual(captured["mode"], "image_to_image")
+        self.assertEqual(captured["input_images"], ["stub-image"])
+
+    def test_refresh_detects_duplicates_and_updates_custom_filter(self) -> None:
+        plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
+        plugin.generation_service = types.SimpleNamespace(
+            targets=[self.build_target(), self.build_target()]
+        )
+        plugin._refresh_dedicated_commands()
+
+        self.assertEqual(plugin._dedicated_command_conflicts, {"基米生图"})
+        self.assertTrue(
+            DedicatedCommandFilter(False).filter(FakeEvent("基米生图 test"), {})
+        )
+
+    async def test_duplicate_command_returns_clear_error(self) -> None:
+        plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
+        plugin._dedicated_targets_by_command = {"基米生图": self.build_target()}
+        plugin._dedicated_command_conflicts = {"基米生图"}
+        event = FakeEvent("基米生图 test")
+
+        results = [result async for result in plugin.dedicated_command(event)]
+        self.assertEqual(len(results), 1)
+        self.assertIn("配置重复", results[0])
 
 
 if __name__ == "__main__":

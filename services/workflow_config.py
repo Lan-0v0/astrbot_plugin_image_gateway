@@ -5,6 +5,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..adapters.base import GenerationError
+from ..utils.commands import normalize_dedicated_command
+from ..utils.config import (
+    parse_bool,
+    parse_int,
+    parse_positive_float,
+    parse_positive_int,
+)
 from .fake_forward import normalize_custom_qq, parse_entry_fake_forward_mode
 from .priority import resolve_priority_value
 from .send_strategy import parse_entry_send_strategy
@@ -108,8 +115,14 @@ class WorkflowRuntimeConfig:
         return cls(
             base_url=str(config_dict.get("base_url") or "http://127.0.0.1:8188").strip().rstrip("/"),
             api_key=str(config_dict.get("api_key") or "").strip(),
-            poll_interval_seconds=float(config_dict.get("poll_interval_seconds") or 1.0),
-            timeout_seconds=int(config_dict.get("timeout_seconds") or 300),
+            poll_interval_seconds=parse_positive_float(
+                config_dict.get("poll_interval_seconds"),
+                1.0,
+            ),
+            timeout_seconds=parse_positive_int(
+                config_dict.get("timeout_seconds"),
+                300,
+            ),
         )
 
     def with_overrides(self, *, base_url_override: str, api_key_override: str) -> WorkflowRuntimeConfig:
@@ -133,6 +146,7 @@ class WorkflowConfig:
     retry_count: int = -1
     max_generation_count: int = -1
     send_strategy: str = "follow_global"
+    dedicated_command: str = ""
     fake_forward_mode: str = "follow_global"
     fake_forward_custom_qq: str = ""
     runtime_base_url_override: str = ""
@@ -162,10 +176,11 @@ class WorkflowConfig:
             display_name=display_name,
             workflow_content_raw=str(entry.get("workflow_content") or ""),
             priority=resolve_priority_value(entry, default_priority=10),
-            enabled=bool(entry.get("enabled", True)),
-            retry_count=int(entry.get("retry_count", -1)),
-            max_generation_count=int(entry.get("max_generation_count", -1)),
+            enabled=parse_bool(entry.get("enabled"), True),
+            retry_count=parse_int(entry.get("retry_count"), -1),
+            max_generation_count=parse_int(entry.get("max_generation_count"), -1),
             send_strategy=parse_entry_send_strategy(entry.get("send_strategy")),
+            dedicated_command=normalize_dedicated_command(entry.get("dedicated_command")),
             fake_forward_mode=parse_entry_fake_forward_mode(entry.get("fake_forward_mode")),
             fake_forward_custom_qq=normalize_custom_qq(entry.get("fake_forward_custom_qq")),
             runtime_base_url_override=str(entry.get("runtime_base_url_override") or "").strip(),

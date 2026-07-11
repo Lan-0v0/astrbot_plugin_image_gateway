@@ -66,5 +66,9 @@ def parse_count_and_prompt(text: str, default_count: int = 1) -> tuple[str, int]
 
     parts = text.rsplit(maxsplit=1)
     if len(parts) == 2 and parts[1].isdigit():
-        return parts[0].strip(), max(1, int(parts[1]))
+        try:
+            count = int(parts[1])
+        except ValueError:
+            return text, default_count
+        return parts[0].strip(), max(1, count)
     return text, default_count

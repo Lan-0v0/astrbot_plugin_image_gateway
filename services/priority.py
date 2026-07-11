@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..utils.config import parse_int
+
 
 PRIORITY_PRESET_VALUES = {
     "highest": 1000,
@@ -19,10 +21,10 @@ def resolve_priority_value(entry: dict[str, Any], *, default_priority: int = 10)
         return PRIORITY_PRESET_VALUES[raw_priority_preset]
 
     if raw_priority_preset == "custom":
-        return int(entry.get("priority") or default_priority)
+        return parse_int(entry.get("priority"), default_priority)
 
     raw_priority = entry.get("priority")
     if raw_priority not in (None, ""):
-        return int(raw_priority)
+        return parse_int(raw_priority, default_priority)
 
     return default_priority

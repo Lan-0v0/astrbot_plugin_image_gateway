@@ -4,6 +4,7 @@ import asyncio
 import base64
 import binascii
 import mimetypes
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -171,9 +172,14 @@ class ComfyUIWorkflowRunner:
             extension = guessed_extension.lstrip(".") or "png"
 
         try:
-            return base64.b64decode(raw_payload), extension, mime_type
+            image_bytes = base64.b64decode(
+                "".join(raw_payload.split()), validate=True
+            )
         except (ValueError, binascii.Error) as exc:
             raise GenerationError("输入图片不是有效的 base64 数据") from exc
+        if not image_bytes:
+            raise GenerationError("输入图片不是有效的 base64 数据")
+        return image_bytes, extension, mime_type
 
     async def _submit_prompt(
         self,
@@ -205,21 +211,51 @@ class ComfyUIWorkflowRunner:
         poll_interval_seconds: float,
     ) -> dict[str, Any]:
         url = f"{base_url}/history/{prompt_id}"
-        elapsed_seconds = 0.0
+        poll_interval_seconds = max(0.1, poll_interval_seconds)
+        deadline = time.monotonic() + max(1, timeout_seconds)
 
-        while elapsed_seconds < timeout_seconds:
+        while time.monotonic() < deadline:
             async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None)
-                    if isinstance(data, dict) and prompt_id in data:
-                        history_entry = data[prompt_id]
-                        if isinstance(history_entry, dict) and history_entry.get("outputs"):
+                data = await resp.json(content_type=None)
+                if resp.status != 200:
+                    message = self._extract_error_message(data, resp.status)
+                    raise GenerationError(f"ComfyUI 查询任务失败: {message}")
+                if isinstance(data, dict) and prompt_id in data:
+                    history_entry = data[prompt_id]
+                    if isinstance(history_entry, dict):
+                        if history_entry.get("outputs"):
                             return history_entry
+                        history_error = self._extract_history_error(history_entry)
+                        if history_error:
+                            raise GenerationError(
+                                f"ComfyUI 任务执行失败: {history_error}"
+                            )
 
-            await asyncio.sleep(poll_interval_seconds)
-            elapsed_seconds += poll_interval_seconds
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds > 0:
+                await asyncio.sleep(min(poll_interval_seconds, remaining_seconds))
 
         raise GenerationError("ComfyUI 任务超时，未在指定时间内完成")
+
+    @staticmethod
+    def _extract_history_error(history_entry: dict[str, Any]) -> str:
+        status = history_entry.get("status")
+        if not isinstance(status, dict):
+            return ""
+        messages = status.get("messages")
+        if isinstance(messages, list):
+            for message in reversed(messages):
+                if not isinstance(message, list) or len(message) < 2:
+                    continue
+                details = message[1]
+                if isinstance(details, dict):
+                    error = details.get("exception_message") or details.get("error")
+                    if error:
+                        return str(error)
+        status_text = str(status.get("status_str") or "").lower()
+        if status_text in {"error", "failed"} or status.get("completed") is True:
+            return status_text or "任务结束但没有图片输出"
+        return ""
 
     @staticmethod
     def _extract_image_references(history_entry: dict[str, Any]) -> list[dict[str, str]]:

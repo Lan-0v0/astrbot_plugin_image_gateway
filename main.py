@@ -22,6 +22,10 @@ from .services.fake_forward import FakeForwardConfig, FakeForwardMode, parse_glo
 from .services.generation import GenerationService
 from .services.image_cache import cleanup_expired_image_cache, parse_image_cache_cleanup_days
 from .services.send_strategy import SendStrategy, get_sender_order, parse_global_send_strategy
+from .utils.commands import (
+    parse_dedicated_command_text,
+)
+from .utils.config import parse_bool, parse_int
 from .utils.messages import collect_input_images, parse_command_text, parse_count_and_prompt
 
 PLUGIN_NAME = "astrbot_plugin_image_gateway"
@@ -42,6 +46,19 @@ LLM_PROMPT_EXPANSION_TEMPLATE = (
     "只输出扩展后的提示词，不要解释，不要换行分段，不要加引号。\n\n"
     "原始提示词：{prompt}"
 )
+
+_DEDICATED_COMMAND_NAMES: set[str] = set()
+
+
+class DedicatedCommandFilter(filter.CustomFilter):
+    def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
+        command, _prompt = parse_dedicated_command_text(event.get_message_str())
+        return command in _DEDICATED_COMMAND_NAMES
+
+
+def _replace_dedicated_command_names(command_names: set[str]) -> None:
+    _DEDICATED_COMMAND_NAMES.clear()
+    _DEDICATED_COMMAND_NAMES.update(command_names)
 
 
 @dataclass(slots=True)
@@ -72,7 +89,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.0.3",
+    "2.1.0",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -127,12 +144,23 @@ class ImageGatewayPlugin(Star):
         )
         self._maybe_cleanup_image_cache(images_dir)
         counter_file = data_dir / "generation_counts.json"
+        existing_service = getattr(self, "generation_service", None)
+        existing_counter = getattr(existing_service, "counter", None)
+        counter = (
+            existing_counter
+            if isinstance(existing_counter, GenerationCounter)
+            and existing_counter.counter_file == counter_file
+            else GenerationCounter(counter_file)
+        )
         self.generation_service = GenerationService.from_config(
             self.plugin_config,
             images_dir,
-            GenerationCounter(counter_file),
+            counter,
         )
-        self.enable_nl_trigger = bool(self.plugin_config.get("enable_nl_trigger", True))
+        self._refresh_dedicated_commands()
+        self.enable_nl_trigger = parse_bool(
+            self.plugin_config.get("enable_nl_trigger"), True
+        )
         self.global_send_strategy = parse_global_send_strategy(self.plugin_config.get("send_strategy"))
         self.global_fake_forward = parse_global_fake_forward(self.plugin_config.get("fake_forward"))
         self.start_message_config = self._load_start_message_config(
@@ -141,6 +169,27 @@ class ImageGatewayPlugin(Star):
         self.llm_prompt_expansion_config = self._load_llm_prompt_expansion_config(
             self.plugin_config.get("llm_prompt_expansion")
         )
+
+    def _refresh_dedicated_commands(self) -> None:
+        targets_by_command = {}
+        conflicts: set[str] = set()
+        for target in getattr(self.generation_service, "targets", []):
+            command = target.dedicated_command
+            if not command:
+                continue
+            if command in targets_by_command:
+                conflicts.add(command)
+                continue
+            targets_by_command[command] = target
+
+        self._dedicated_targets_by_command = targets_by_command
+        self._dedicated_command_conflicts = conflicts
+        _replace_dedicated_command_names(set(targets_by_command) | conflicts)
+
+        for command in sorted(conflicts):
+            logger.warning(
+                f"专属指令 /{command} 被多个已启用条目重复配置，请修改后再使用"
+            )
 
     def _maybe_cleanup_image_cache(self, images_dir: Path) -> None:
         if self.image_cache_cleanup_days is None:
@@ -172,7 +221,7 @@ class ImageGatewayPlugin(Star):
     ) -> GenerationStartMessageConfig:
         config_dict = raw_config if isinstance(raw_config, dict) else {}
 
-        enabled = bool(config_dict.get("enabled", True))
+        enabled = parse_bool(config_dict.get("enabled"), True)
 
         mode = str(config_dict.get("mode") or "fixed").strip().lower()
         if mode not in {"fixed", "llm"}:
@@ -208,7 +257,7 @@ class ImageGatewayPlugin(Star):
     ) -> LlmPromptExpansionConfig:
         config_dict = raw_config if isinstance(raw_config, dict) else {}
 
-        enabled = bool(config_dict.get("enabled", False))
+        enabled = parse_bool(config_dict.get("enabled"), False)
         llm_provider_id = str(config_dict.get("llm_provider_id") or "").strip()
         custom_persona_prompt = str(
             config_dict.get("custom_persona_prompt") or DEFAULT_LLM_PROMPT_EXPANSION_PERSONA
@@ -695,13 +744,17 @@ class ImageGatewayPlugin(Star):
         prompt: str,
         count: int = 1,
         input_images: list[str] | None = None,
+        dedicated_command: str | None = None,
         success_label: str,
     ):
         self._refresh_services()
 
         try:
             requested_count = self.generation_service._normalize_requested_count(mode, count)
-            self.generation_service.validate_request_count(requested_count, mode=mode)
+            validation_kwargs = {"mode": mode}
+            if dedicated_command:
+                validation_kwargs["dedicated_command"] = dedicated_command
+            self.generation_service.validate_request_count(requested_count, **validation_kwargs)
         except GenerationError as exc:
             yield event.plain_result(str(exc))
             return
@@ -723,13 +776,16 @@ class ImageGatewayPlugin(Star):
         started = time.time()
 
         try:
-            paths, _model_name, effective_send_strategy, effective_fake_forward = (
-                await self.generation_service.generate(
-                mode=mode,
-                prompt=effective_prompt,
-                count=count,
-                input_images=input_images,
-                )
+            generation_kwargs = {
+                "mode": mode,
+                "prompt": effective_prompt,
+                "count": count,
+                "input_images": input_images,
+            }
+            if dedicated_command:
+                generation_kwargs["dedicated_command"] = dedicated_command
+            paths, _model_name, effective_send_strategy, effective_fake_forward = await self.generation_service.generate(
+                **generation_kwargs
             )
         except GenerationError as exc:
             await self._retract_start_message(event, start_message.message_id)
@@ -814,6 +870,15 @@ class ImageGatewayPlugin(Star):
             task.result()
         except Exception as exc:
             logger.error(f"自然语言图像生成后台任务异常: {exc}")
+
+    async def terminate(self) -> None:
+        _replace_dedicated_command_names(set())
+        tasks = list(getattr(self, "_background_generation_tasks", set()))
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_generation_tasks.clear()
 
     async def _run_generation_in_background(
         self,
@@ -1285,6 +1350,51 @@ class ImageGatewayPlugin(Star):
         ):
             yield result
 
+    @filter.custom_filter(DedicatedCommandFilter, False)
+    async def dedicated_command(self, event: AstrMessageEvent):
+        """使用配置条目的专属指令定向生成图片。"""
+        event.stop_event()
+        command, prompt = parse_dedicated_command_text(event.get_message_str())
+
+        if command in self._dedicated_command_conflicts:
+            yield event.plain_result(
+                f"专属指令 /{command} 配置重复，请为相关模型或工作流设置不同指令"
+            )
+            return
+
+        target = self._dedicated_targets_by_command.get(command)
+        if target is None:
+            yield event.plain_result(f"专属指令 /{command} 对应的图像目标不可用")
+            return
+
+        if not prompt:
+            yield event.plain_result(f"缺少 /{command} 的提示词")
+            return
+
+        input_images = await collect_input_images(event)
+        mode = "image_to_image" if input_images else "text_to_image"
+        if not target.supports_mode(mode):
+            mode_label = "改图" if mode == "image_to_image" else "文生图"
+            yield event.plain_result(
+                f"专属指令 /{command} 对应的目标不支持{mode_label}"
+            )
+            return
+
+        image_count = 1
+        if mode == "text_to_image":
+            prompt, image_count = parse_count_and_prompt(prompt)
+
+        async for result in self._run_generation(
+            event,
+            mode=mode,
+            prompt=prompt,
+            count=image_count,
+            input_images=input_images or None,
+            dedicated_command=command,
+            success_label=("改图" if mode == "image_to_image" else "生图"),
+        ):
+            yield result
+
     @filter.command("生图")
     async def text_to_image_command(
         self,
@@ -1353,7 +1463,7 @@ class ImageGatewayPlugin(Star):
             event,
             mode=mode_value,
             prompt=prompt,
-            count=max(1, int(count or 1)),
+            count=max(1, parse_int(count, 1)),
             input_images=input_images,
             success_label=label,
         )

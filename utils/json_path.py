@@ -68,6 +68,9 @@ def _get_segment(current: Any, segment: str) -> Any:
 
 def _parse_index(segment: str) -> int:
     try:
-        return int(segment)
+        index = int(segment)
     except ValueError as exc:
         raise KeyError(f"无效的列表索引: {segment}") from exc
+    if index < 0:
+        raise IndexError(f"列表索引不能为负数: {segment}")
+    return index

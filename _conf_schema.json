@@ -170,6 +170,7 @@
             "type": "string",
             "default": ""
           },
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "hint": "跟随全局表示使用下方「全局消息伪造转发」配置；开启后会在生成完成时合并转发开始提示与图片",
@@ -371,6 +372,9 @@
             "type": "string",
             "default": ""
           },
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "fake_forward_mode": {"description": "消息伪造转发", "hint": "默认跟随全局配置；可单独关闭或指定伪造身份", "type": "string", "default": "follow_global", "options": ["follow_global", "off", "bot_self", "requester", "custom_qq"], "labels": ["跟随全局", "关闭", "Bot自身", "生图要求者", "自定义QQ号"]},
+          "fake_forward_custom_qq": {"description": "自定义QQ号", "type": "string", "default": "", "condition": {"fake_forward_mode": "custom_qq"}},
           "send_strategy": {
             "description": "发送链路",
             "hint": "跟随全局表示使用最底部的「全局发送链路」配置；也可为该模型单独指定",
@@ -516,6 +520,7 @@
             "type": "string",
             "default": ""
           },
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
@@ -592,6 +597,7 @@
             "labels": ["URL", "Base64"]
           },
           "seed": {"description": "随机种子", "type": "string", "default": ""},
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
@@ -675,6 +681,7 @@
             "default": false
           },
           "seed": {"description": "随机种子", "type": "string", "default": ""},
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
@@ -739,6 +746,7 @@
             "options": ["auto", "1024x1024", "1440x720", "720x1440"]
           },
           "seed": {"description": "随机种子", "type": "string", "default": ""},
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
@@ -809,6 +817,7 @@
             "default": ""
           },
           "seed": {"description": "随机种子", "type": "string", "default": ""},
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
@@ -928,6 +937,7 @@
             "type": "text",
             "default": ""
           },
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "hint": "跟随全局表示使用下方「全局消息伪造转发」配置；开启后会在生成完成时合并转发开始提示与图片",
@@ -1036,6 +1046,7 @@
             "type": "text",
             "default": "{\n  \"prompt\": \"\",\n  \"negative_prompt\": \"\",\n  \"steps\": 20,\n  \"cfg_scale\": 7,\n  \"width\": 512,\n  \"height\": 512,\n  \"sampler_name\": \"Euler\",\n  \"seed\": -1\n}"
           },
+          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
