@@ -89,7 +89,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.1.0",
+    "2.1.1",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -1396,18 +1396,9 @@ class ImageGatewayPlugin(Star):
             yield result
 
     @filter.command("生图")
-    async def text_to_image_command(
-        self,
-        event: AstrMessageEvent,
-        prompt: str = "",
-        count: int = 1,
-    ):
+    async def text_to_image_command(self, event: AstrMessageEvent):
         """文字生图：`/生图 {prompt} {count?}`"""
-        async for result in self._handle_text_to_image_request(
-            event,
-            prompt=prompt,
-            count=count,
-        ):
+        async for result in self._handle_text_to_image_request(event):
             yield result
 
     @filter.regex(r"^(?:/|／)?\s*生图[，,、:：;；。.!！？?]+\s*.*$")

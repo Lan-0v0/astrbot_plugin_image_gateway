@@ -521,6 +521,7 @@ https://github.com/Lan-0v0/astrbot\_plugin\_image\_gateway
 * 提示词必填
 * 张数为可选末尾整数，默认为 `1`
 * 也支持 AstrBot 参数形式：`/生图 提示词:xxx  count:2`
+* 后端单次返回少于请求张数时，插件会按剩余张数继续生成；因此多张请求可能产生多次上游调用
 
 **示例：**
 
@@ -587,8 +588,8 @@ https://github.com/Lan-0v0/astrbot\_plugin\_image\_gateway
    * **单张**：优先直接发送图片消息；若直接发送失败，再回退到结果管道发送
    * **多张**：优先发送合并转发节点；若失败，则按 `图片 1/N` 的顺序逐张发送，并继续做多级回退
 5. 若开始提示消息成功获取到消息 ID，生成结束后会自动撤回该提示；如果平台不支持撤回或无法取得消息 ID，插件会自动忽略该步骤
-5. 图片保存在插件数据目录 `data/plugin\_data/astrbot\_plugin\_image\_gateway/images/`（由 AstrBot 运行时管理，无需手动创建）
-6. 若 AstrBot 主配置中设置了 `callback\_api\_base`，会尝试将图片转为可访问 URL 发送；转换失败则回退为本地文件发送
+6. 图片保存在插件数据目录 `data/plugin\_data/astrbot\_plugin\_image\_gateway/images/`（由 AstrBot 运行时管理，无需手动创建）
+7. 若 AstrBot 主配置中设置了 `callback\_api\_base`，会尝试将图片转为可访问 URL 发送；转换失败则回退为本地文件发送
 
 ## 注意事项
 

@@ -205,7 +205,10 @@ from astrbot_plugin_image_gateway.utils.commands import (
 )  # noqa: E402
 from astrbot_plugin_image_gateway.utils.json_path import get_by_dot_path, set_by_dot_path  # noqa: E402
 from astrbot_plugin_image_gateway.utils.storage import save_base64_image  # noqa: E402
-from astrbot_plugin_image_gateway.utils.messages import parse_command_text  # noqa: E402
+from astrbot_plugin_image_gateway.utils.messages import (  # noqa: E402
+    parse_command_text,
+    parse_count_and_prompt,
+)
 
 
 class FakeCounter:
@@ -414,6 +417,145 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(model_name, "Primary")
         self.assertEqual(paths, [Path("generated.png")])
 
+    async def test_short_backend_responses_are_filled_to_requested_count(self) -> None:
+        model = self.build_model("SingleImageBackend", max_generation_count=3)
+        counter = FakeCounter()
+        service = GenerationService(
+            [model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=3,
+            output_dir=Path("."),
+            counter=counter,
+        )
+        requested_batches: list[int] = []
+
+        async def return_one_image(_prompt, count, *_args):
+            requested_batches.append(count)
+            return [Path(f"generated-{len(requested_batches)}.png")]
+
+        adapter = types.SimpleNamespace(
+            text_to_image=return_one_image,
+            image_to_image=return_one_image,
+        )
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=adapter,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, *_ = await service.generate(
+                mode="text_to_image",
+                prompt="test prompt",
+                count=3,
+            )
+
+        self.assertEqual(requested_batches, [3, 2, 1])
+        self.assertEqual(
+            paths,
+            [
+                Path("generated-1.png"),
+                Path("generated-2.png"),
+                Path("generated-3.png"),
+            ],
+        )
+        self.assertEqual(counter.counts[model.model_key()], 3)
+
+    async def test_full_backend_response_is_not_repeated_and_excess_is_trimmed(self) -> None:
+        model = self.build_model("BatchBackend", max_generation_count=2)
+        service = GenerationService(
+            [model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=2,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        adapter_call_count = 0
+
+        async def return_excess_images(*_args):
+            nonlocal adapter_call_count
+            adapter_call_count += 1
+            return [Path("one.png"), Path("two.png"), Path("excess.png")]
+
+        adapter = types.SimpleNamespace(
+            text_to_image=return_excess_images,
+            image_to_image=return_excess_images,
+        )
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=adapter,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, *_ = await service.generate(
+                mode="text_to_image",
+                prompt="test prompt",
+                count=2,
+            )
+
+        self.assertEqual(adapter_call_count, 1)
+        self.assertEqual(paths, [Path("one.png"), Path("two.png")])
+
+    async def test_partial_backend_failure_falls_back_without_returning_incomplete_result(self) -> None:
+        primary_model = self.build_model("Primary", max_generation_count=2, priority=10)
+        fallback_model = self.build_model("Fallback", max_generation_count=2, priority=0)
+        counter = FakeCounter()
+        service = GenerationService(
+            [primary_model, fallback_model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=2,
+            output_dir=Path("."),
+            counter=counter,
+        )
+        calls: list[tuple[str, int]] = []
+
+        async def generate(_prompt, count, target, *_args):
+            calls.append((target.display_name, count))
+            if target.display_name == "Primary":
+                if count == 2:
+                    return [Path("primary-partial.png")]
+                raise GenerationError("remaining image failed")
+            return [Path("fallback-one.png"), Path("fallback-two.png")]
+
+        adapter = types.SimpleNamespace(
+            text_to_image=generate,
+            image_to_image=generate,
+        )
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=adapter,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, target_name, *_ = await service.generate(
+                mode="text_to_image",
+                prompt="test prompt",
+                count=2,
+            )
+
+        self.assertEqual(
+            calls,
+            [("Primary", 2), ("Primary", 1), ("Fallback", 2)],
+        )
+        self.assertEqual(target_name, "Fallback")
+        self.assertEqual(paths, [Path("fallback-one.png"), Path("fallback-two.png")])
+        self.assertNotIn(primary_model.model_key(), counter.counts)
+        self.assertEqual(counter.counts[fallback_model.model_key()], 2)
+
     async def test_four_providers_fall_back_to_next_priority_provider_when_current_one_fails(self) -> None:
         provider_specs = [
             ("ProviderAlpha", 400),
@@ -530,8 +672,50 @@ class MessageParsingRegressionTests(unittest.TestCase):
         event = FakeEvent("/别的命令 只是路过")
         self.assertEqual(parse_command_text(event, "改图"), "")
 
+    def test_parse_count_supports_multiword_and_named_prompt_forms(self) -> None:
+        self.assertEqual(
+            parse_count_and_prompt("a detailed multi word prompt 3"),
+            ("a detailed multi word prompt", 3),
+        )
+        self.assertEqual(
+            parse_count_and_prompt("prompt:a cat beside the window count:2"),
+            ("a cat beside the window", 2),
+        )
+        self.assertEqual(
+            parse_count_and_prompt("提示词:一只猫 count:2"),
+            ("一只猫", 2),
+        )
+
+
+class TextToImageCommandRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_standard_command_reads_full_prompt_and_trailing_count_from_raw_message(self) -> None:
+        plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
+        captured: dict[str, Any] = {}
+
+        async def run_generation(event, **kwargs):
+            captured.update(kwargs)
+            yield event.plain_result("done")
+
+        plugin._run_generation = run_generation
+        event = FakeEvent("/生图 a detailed multi word prompt 3")
+        results = [result async for result in plugin.text_to_image_command(event)]
+
+        self.assertEqual(results, ["done"])
+        self.assertTrue(event.stopped)
+        self.assertEqual(captured["prompt"], "a detailed multi word prompt")
+        self.assertEqual(captured["count"], 3)
+
 
 class ConfigurationDefaultRegressionTests(unittest.TestCase):
+    def test_release_version_is_consistent_across_metadata_code_and_changelog(self) -> None:
+        metadata = (repository_root / "metadata.yaml").read_text(encoding="utf-8")
+        main_source = (repository_root / "main.py").read_text(encoding="utf-8")
+        changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
+
+        self.assertIn("version: 2.1.1", metadata)
+        self.assertIn('"2.1.1",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.1"))
+
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
         self.assertEqual(model_config.quality, "high")
@@ -2434,7 +2618,10 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(target_name, "FallbackModel")
-        self.assertEqual(paths, [Path("fallback_generated.png")])
+        self.assertEqual(
+            paths,
+            [Path("fallback_generated.png"), Path("fallback_generated.png")],
+        )
 
     async def test_dual_entry_workflow_handles_image_to_image_requests(self) -> None:
         workflow_only = self.build_workflow(

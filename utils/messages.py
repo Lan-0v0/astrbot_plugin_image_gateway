@@ -64,6 +64,18 @@ def parse_count_and_prompt(text: str, default_count: int = 1) -> tuple[str, int]
     if not text:
         return "", default_count
 
+    named_match = re.fullmatch(
+        r"(?:提示词|prompt)\s*[:：]\s*(?P<prompt>.+?)\s+count\s*[:：]\s*(?P<count>\d+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if named_match:
+        try:
+            count = int(named_match.group("count"))
+        except ValueError:
+            return text, default_count
+        return named_match.group("prompt").strip(), max(1, count)
+
     parts = text.rsplit(maxsplit=1)
     if len(parts) == 2 and parts[1].isdigit():
         try:

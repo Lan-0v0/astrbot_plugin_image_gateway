@@ -145,7 +145,7 @@ class GenerationService:
                             )
                             await asyncio.sleep(delay)
 
-                        paths = await self._invoke_target(
+                        paths = await self._invoke_target_until_count(
                             target,
                             mode=mode,
                             prompt=prompt,
@@ -198,6 +198,32 @@ class GenerationService:
         if len(brief) > 120:
             brief = brief[:117] + "..."
         raise GenerationError(brief)
+
+    async def _invoke_target_until_count(
+        self,
+        target: GenerationTarget,
+        *,
+        mode: Mode,
+        prompt: str,
+        requested_count: int,
+        input_images: list[str] | None,
+        session: aiohttp.ClientSession,
+    ) -> list[Path]:
+        paths: list[Path] = []
+        while len(paths) < requested_count:
+            remaining_count = requested_count - len(paths)
+            batch_paths = await self._invoke_target(
+                target,
+                mode=mode,
+                prompt=prompt,
+                requested_count=remaining_count,
+                input_images=input_images,
+                session=session,
+            )
+            if not batch_paths:
+                raise GenerationError(f"{target.display_name} 未返回任何图片")
+            paths.extend(batch_paths[:remaining_count])
+        return paths
 
     async def _invoke_target(
         self,
