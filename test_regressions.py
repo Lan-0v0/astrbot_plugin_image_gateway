@@ -149,7 +149,15 @@ repository_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(repository_root.parent))
 
 from astrbot_plugin_image_gateway.adapters import get_adapter  # noqa: E402
-from astrbot_plugin_image_gateway.adapters.base import GenerationError, ModelConfig, SensitiveContentError  # noqa: E402
+from astrbot_plugin_image_gateway.adapters.base import (  # noqa: E402
+    FailureClass,
+    GenerationError,
+    ModelConfig,
+    SensitiveContentError,
+    classify_generation_failure,
+    is_safety_moderation_error,
+    raise_exhausted_generation_error,
+)
 from astrbot_plugin_image_gateway.adapters.dashscope import DashScopeAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.gemini import GeminiAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.minimax import MiniMaxAdapter  # noqa: E402
@@ -712,9 +720,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.1", metadata)
-        self.assertIn('"2.1.1",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.1"))
+        self.assertIn("version: 2.1.2", metadata)
+        self.assertIn('"2.1.2",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.2"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -1383,6 +1391,9 @@ class ModerationOptionRegressionTests(unittest.TestCase):
     def test_openai_high_moderation_maps_to_high(self) -> None:
         self.assertEqual(OpenAIAdapter._moderation_attempts("high"), ["high"])
 
+    def test_openai_none_moderation_includes_omit_low_auto(self) -> None:
+        self.assertEqual(OpenAIAdapter._moderation_attempts("none"), [None, "low", "auto"])
+
     def test_gemini_high_moderation_maps_to_medium_and_above_blocking(self) -> None:
         safety_attempts = GeminiAdapter()._safety_attempts("high")
         self.assertEqual(
@@ -1392,7 +1403,18 @@ class ModerationOptionRegressionTests(unittest.TestCase):
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
             ]],
+        )
+
+    def test_gemini_none_includes_omit_and_asymmetric_after_block_only_high(self) -> None:
+        labels = [
+            GeminiAdapter._safety_label(settings)
+            for settings in GeminiAdapter()._safety_attempts("none")
+        ]
+        self.assertEqual(
+            labels,
+            ["BLOCK_NONE", "OFF", "BLOCK_ONLY_HIGH", "default", "asymmetric"],
         )
 
     def test_openai_image_to_image_rejects_invalid_base64_input(self) -> None:
@@ -1417,6 +1439,268 @@ class ModerationOptionRegressionTests(unittest.TestCase):
             )
 
         self.assertEqual(str(raised_error.exception), "输入图片不是有效的 base64 数据")
+
+
+class FailureClassificationRegressionTests(unittest.TestCase):
+    def test_classifies_content_blocked_messages(self) -> None:
+        self.assertEqual(
+            classify_generation_failure("blocked due to safety filter"),
+            FailureClass.CONTENT_BLOCKED,
+        )
+        self.assertEqual(
+            classify_generation_failure("Request rejected by content policy"),
+            FailureClass.CONTENT_BLOCKED,
+        )
+        self.assertEqual(
+            classify_generation_failure("包含敏感内容"),
+            FailureClass.CONTENT_BLOCKED,
+        )
+        self.assertTrue(is_safety_moderation_error("内容安全策略拦截"))
+
+    def test_does_not_treat_bare_security_word_as_content_block(self) -> None:
+        self.assertEqual(
+            classify_generation_failure("安全组配置错误"),
+            FailureClass.UNKNOWN,
+        )
+        self.assertFalse(is_safety_moderation_error("安全组配置错误"))
+
+    def test_classifies_param_auth_and_status_codes(self) -> None:
+        self.assertEqual(
+            classify_generation_failure("Unknown parameter: moderation"),
+            FailureClass.PARAM_UNSUPPORTED,
+        )
+        self.assertEqual(
+            classify_generation_failure("invalid api key"),
+            FailureClass.AUTH_OR_QUOTA,
+        )
+        self.assertEqual(
+            classify_generation_failure("too many requests", status=429),
+            FailureClass.AUTH_OR_QUOTA,
+        )
+        self.assertEqual(
+            classify_generation_failure("upstream unavailable", status=503),
+            FailureClass.TRANSIENT,
+        )
+        self.assertEqual(
+            classify_generation_failure("content policy violation", status=403),
+            FailureClass.CONTENT_BLOCKED,
+        )
+
+    def test_raise_exhausted_uses_sensitive_error_when_content_blocked(self) -> None:
+        with self.assertRaises(SensitiveContentError):
+            raise_exhausted_generation_error(
+                "text_to_image",
+                "blocked",
+                content_blocked=True,
+            )
+        with self.assertRaises(GenerationError) as raised:
+            raise_exhausted_generation_error(
+                "text_to_image",
+                "timeout",
+                content_blocked=False,
+            )
+        self.assertEqual(str(raised.exception), "timeout")
+        self.assertNotIsInstance(raised.exception, SensitiveContentError)
+
+
+class ModerationBypassChainRegressionTests(unittest.IsolatedAsyncioTestCase):
+    def _openai_model(self, *, moderation: str = "none") -> ModelConfig:
+        return ModelConfig(
+            provider="openai",
+            display_name="OpenAI",
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name="test-model",
+            moderation=moderation,
+        )
+
+    def _gemini_model(self, *, moderation: str = "none") -> ModelConfig:
+        return ModelConfig(
+            provider="gemini",
+            display_name="Gemini",
+            url="https://example.com/v1beta",
+            apikey="test-key",
+            model_name="gemini-test",
+            moderation=moderation,
+        )
+
+    async def test_openai_none_content_block_still_tries_chat_and_can_succeed(self) -> None:
+        adapter = OpenAIAdapter()
+        model = self._openai_model()
+        success_path = Path("chat-success.png")
+        post_json = AsyncMock(
+            side_effect=GenerationError("Request rejected by content policy")
+        )
+        chat_fallback = AsyncMock(return_value=[success_path])
+
+        with (
+            patch.object(adapter, "_post_json", post_json),
+            patch.object(adapter, "_text_to_image_via_chat", chat_fallback),
+        ):
+            paths = await adapter.text_to_image(
+                "prompt",
+                1,
+                model,
+                Path("."),
+                FakeClientSession(),
+            )
+
+        self.assertEqual(paths, [success_path])
+        # Content-block on first images attempt should skip remaining moderation values.
+        self.assertEqual(post_json.await_count, 1)
+        chat_fallback.assert_awaited_once()
+
+    async def test_openai_none_exhausts_to_sensitive_when_chat_also_blocked(self) -> None:
+        adapter = OpenAIAdapter()
+        model = self._openai_model()
+        post_json = AsyncMock(side_effect=GenerationError("content policy violation"))
+        chat_fallback = AsyncMock(side_effect=GenerationError("blocked due to safety filter"))
+
+        with (
+            patch.object(adapter, "_post_json", post_json),
+            patch.object(adapter, "_text_to_image_via_chat", chat_fallback),
+            self.assertRaises(SensitiveContentError),
+        ):
+            await adapter.text_to_image(
+                "prompt",
+                1,
+                model,
+                Path("."),
+                FakeClientSession(),
+            )
+
+        chat_fallback.assert_awaited_once()
+
+    async def test_openai_none_param_errors_continue_moderation_chain(self) -> None:
+        adapter = OpenAIAdapter()
+        model = self._openai_model()
+        success_path = Path("ok.png")
+        calls: list[Any] = []
+
+        async def post_json(_session, _url, _key, payload):
+            calls.append(payload.get("moderation", "__omit__"))
+            if len(calls) < 3:
+                raise GenerationError("Unknown parameter: moderation")
+            return {"data": [{"b64_json": "aGVsbG8="}]}
+
+        with (
+            patch.object(adapter, "_post_json", side_effect=post_json),
+            patch.object(
+                adapter,
+                "_extract_and_save_paths",
+                AsyncMock(return_value=[success_path]),
+            ),
+            patch.object(adapter, "_text_to_image_via_chat", AsyncMock()) as chat_fallback,
+        ):
+            paths = await adapter.text_to_image(
+                "prompt",
+                1,
+                model,
+                Path("."),
+                FakeClientSession(),
+            )
+
+        self.assertEqual(paths, [success_path])
+        self.assertEqual(calls, ["__omit__", "low", "auto"])
+        chat_fallback.assert_not_awaited()
+
+    async def test_openai_auth_error_stops_without_chat_fallback(self) -> None:
+        adapter = OpenAIAdapter()
+        model = self._openai_model()
+        post_json = AsyncMock(side_effect=GenerationError("invalid api key"))
+        chat_fallback = AsyncMock()
+
+        with (
+            patch.object(adapter, "_post_json", post_json),
+            patch.object(adapter, "_text_to_image_via_chat", chat_fallback),
+            self.assertRaises(GenerationError) as raised,
+        ):
+            await adapter.text_to_image(
+                "prompt",
+                1,
+                model,
+                Path("."),
+                FakeClientSession(),
+            )
+
+        self.assertNotIsInstance(raised.exception, SensitiveContentError)
+        self.assertEqual(str(raised.exception), "invalid api key")
+        chat_fallback.assert_not_awaited()
+
+    async def test_gemini_none_content_block_at_block_only_high_still_tries_later_steps(
+        self,
+    ) -> None:
+        adapter = GeminiAdapter()
+        model = self._gemini_model()
+        success_path = Path("compat.png")
+        labels: list[str] = []
+
+        async def post_json(_session, _url, payload):
+            settings = payload.get("safetySettings")
+            labels.append(GeminiAdapter._safety_label(settings))
+            raise GenerationError("blocked due to safety filter")
+
+        with (
+            patch.object(adapter, "_post_json", side_effect=post_json),
+            patch.object(
+                adapter,
+                "_generate_via_openai_compatible",
+                AsyncMock(return_value=[success_path]),
+            ) as compat,
+        ):
+            paths = await adapter.text_to_image(
+                "prompt",
+                1,
+                model,
+                Path("."),
+                FakeClientSession(),
+            )
+
+        self.assertEqual(paths, [success_path])
+        self.assertEqual(
+            labels,
+            ["BLOCK_NONE", "OFF", "BLOCK_ONLY_HIGH", "default", "asymmetric"],
+        )
+        compat.assert_awaited_once()
+
+    async def test_gemini_none_exhausts_to_sensitive_after_full_chain(self) -> None:
+        adapter = GeminiAdapter()
+        model = self._gemini_model()
+
+        with (
+            patch.object(
+                adapter,
+                "_post_json",
+                AsyncMock(side_effect=GenerationError("blocked due to safety filter")),
+            ),
+            patch.object(
+                adapter,
+                "_generate_via_openai_compatible",
+                AsyncMock(side_effect=SensitiveContentError("text_to_image")),
+            ),
+            self.assertRaises(SensitiveContentError),
+        ):
+            await adapter.text_to_image(
+                "prompt",
+                1,
+                model,
+                Path("."),
+                FakeClientSession(),
+            )
+
+    async def test_gemini_extract_paths_detects_prompt_feedback_block(self) -> None:
+        adapter = GeminiAdapter()
+        with self.assertRaises(GenerationError) as raised:
+            await adapter._extract_paths(
+                FakeClientSession(),
+                {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []},
+                Path("."),
+            )
+        self.assertIn("safety", str(raised.exception).lower())
+        self.assertEqual(
+            classify_generation_failure(str(raised.exception)),
+            FailureClass.CONTENT_BLOCKED,
+        )
 
 
 class JsonPathRegressionTests(unittest.TestCase):

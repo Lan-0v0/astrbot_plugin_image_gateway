@@ -9,12 +9,13 @@ import aiohttp
 from astrbot.api import logger
 
 from .base import (
+    FailureClass,
     GenerationError,
     ModelConfig,
     SensitiveContentError,
-    is_safety_moderation_error,
+    classify_generation_failure,
     moderation_bypass_enabled,
-    sensitive_content_message,
+    raise_exhausted_generation_error,
 )
 from ..utils.storage import download_image, save_base64_image
 
@@ -23,6 +24,14 @@ _DATA_URL_PATTERN = re.compile(
 )
 _HTTP_URL_PATTERN = re.compile(r"(https?://[^\s)\"']+)")
 
+_SAFETY_FINISH_REASONS = {
+    "SAFETY",
+    "IMAGE_SAFETY",
+    "PROHIBITED_CONTENT",
+    "BLOCKLIST",
+    "SPII",
+}
+
 
 class GeminiAdapter:
     _HARM_CATEGORIES = [
@@ -30,6 +39,7 @@ class GeminiAdapter:
         "HARM_CATEGORY_HATE_SPEECH",
         "HARM_CATEGORY_SEXUALLY_EXPLICIT",
         "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "HARM_CATEGORY_CIVIC_INTEGRITY",
     ]
 
     async def text_to_image(
@@ -116,6 +126,7 @@ class GeminiAdapter:
         bypass_chain = moderation_bypass_enabled(model.moderation, default="default")
         mode = "image_to_image" if input_images else "text_to_image"
         last_error = "Gemini 改图失败" if input_images else "Gemini 生图失败"
+        content_blocked = False
 
         for safety_settings in safety_attempts:
             payload = dict(payload_base)
@@ -128,17 +139,19 @@ class GeminiAdapter:
                     return paths[:count] if count else paths
             except GenerationError as exc:
                 last_error = str(exc)
-                if (
-                    bypass_chain
-                    and self._safety_label(safety_settings) == "BLOCK_ONLY_HIGH"
-                    and is_safety_moderation_error(last_error)
-                ):
-                    raise SensitiveContentError(mode) from exc
+                failure = classify_generation_failure(last_error)
+                label = self._safety_label(safety_settings)
                 logger.warning(
-                    f"[Gemini:{model.display_name}] 尝试 safety={self._safety_label(safety_settings)} 失败: {exc}"
+                    f"[Gemini:{model.display_name}] 尝试 safety={label} "
+                    f"失败({failure.value}): {exc}"
                 )
+                if failure == FailureClass.AUTH_OR_QUOTA:
+                    raise GenerationError(last_error) from exc
+                if failure == FailureClass.CONTENT_BLOCKED:
+                    content_blocked = True
+                # PARAM / CONTENT / UNKNOWN: continue remaining safety steps (including omit).
 
-        # OpenAI 兼容 Imagen 网关
+        # OpenAI-compatible images surface — different moderation plane for many gateways.
         if bypass_chain:
             try:
                 paths = await self._generate_via_openai_compatible(
@@ -147,11 +160,24 @@ class GeminiAdapter:
                 if paths:
                     return paths
             except SensitiveContentError:
+                # OpenAI adapter already exhausted its own chain with content blocks.
                 raise
             except GenerationError as exc:
                 last_error = str(exc)
+                failure = classify_generation_failure(last_error)
+                logger.warning(
+                    f"[Gemini:{model.display_name}] OpenAI 兼容回退失败({failure.value}): {exc}"
+                )
+                if failure == FailureClass.CONTENT_BLOCKED:
+                    content_blocked = True
+                elif failure == FailureClass.AUTH_OR_QUOTA:
+                    raise GenerationError(last_error) from exc
 
-        raise GenerationError(last_error)
+        raise_exhausted_generation_error(
+            mode,
+            last_error,
+            content_blocked=content_blocked,
+        )
 
     def _safety_attempts(self, level: str) -> list[list[dict[str, str]] | None]:
         level = (level or "default").lower()
@@ -160,7 +186,10 @@ class GeminiAdapter:
                 self._build_safety_settings("BLOCK_NONE"),
                 self._build_safety_settings("OFF"),
                 self._build_safety_settings("BLOCK_ONLY_HIGH"),
+                # Omit safetySettings entirely (reachable after content-block on prior steps).
                 None,
+                # Asymmetric: loosen only high-impact categories; keep others at BLOCK_ONLY_HIGH.
+                self._build_asymmetric_safety_settings(),
             ]
         if level == "high":
             return [self._build_safety_settings("BLOCK_MEDIUM_AND_ABOVE")]
@@ -174,11 +203,25 @@ class GeminiAdapter:
             for category in self._HARM_CATEGORIES
         ]
 
+    def _build_asymmetric_safety_settings(self) -> list[dict[str, str]]:
+        loose = {
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT",
+        }
+        settings: list[dict[str, str]] = []
+        for category in self._HARM_CATEGORIES:
+            threshold = "BLOCK_NONE" if category in loose else "BLOCK_ONLY_HIGH"
+            settings.append({"category": category, "threshold": threshold})
+        return settings
+
     @staticmethod
     def _safety_label(settings: list[dict[str, str]] | None) -> str:
         if not settings:
             return "default"
-        return settings[0].get("threshold", "custom")
+        thresholds = {item.get("threshold", "custom") for item in settings}
+        if len(thresholds) == 1:
+            return next(iter(thresholds)) or "custom"
+        return "asymmetric"
 
     @staticmethod
     def _build_generate_url(base_url: str, model_name: str, api_key: str) -> str:
@@ -214,6 +257,14 @@ class GeminiAdapter:
         data: dict[str, Any],
         output_dir: Path,
     ) -> list[Path]:
+        prompt_feedback = data.get("promptFeedback") or data.get("prompt_feedback") or {}
+        if isinstance(prompt_feedback, dict):
+            block_reason = str(
+                prompt_feedback.get("blockReason") or prompt_feedback.get("block_reason") or ""
+            ).strip()
+            if block_reason:
+                raise GenerationError(f"blocked due to safety filter: {block_reason}")
+
         paths: list[Path] = []
         candidates = data.get("candidates") or []
         for candidate in candidates:
@@ -222,8 +273,8 @@ class GeminiAdapter:
             finish_reason = str(
                 candidate.get("finishReason") or candidate.get("finish_reason") or ""
             ).upper()
-            if finish_reason == "SAFETY":
-                raise GenerationError("blocked due to safety filter")
+            if finish_reason in _SAFETY_FINISH_REASONS:
+                raise GenerationError(f"blocked due to safety filter: {finish_reason}")
             content = candidate.get("content") or {}
             parts = content.get("parts") or []
             for part in parts:

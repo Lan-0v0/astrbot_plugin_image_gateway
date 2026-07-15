@@ -1,3 +1,10 @@
+## v2.1.2
+
+- 强化 `moderation=none` 绕过链：移除 OpenAI 在 `low`、Gemini 在 `BLOCK_ONLY_HIGH` 处的提前敏感终止，改为失败分类后穷尽参数链与备用路由，整链失败才返回敏感错误
+- OpenAI 在内容拦截时跳过同质 moderation 参数重试并继续 chat 路由；Gemini 补齐省略 `safetySettings`、非对称 safety、扩展 harm category / finishReason / promptFeedback 识别，并保留 OpenAI 兼容回退
+- 收紧安全错误识别（减少「安全」等宽泛词误伤），新增 `FailureClass` 区分内容拦截、参数不支持、鉴权配额等恢复边
+- 增加失败分类与 none 绕过链回归测试，并同步版本信息
+
 ## v2.1.1
 
 - 修复 `/生图 {提示词} {张数}` 在部分 OpenAI 兼容接口及 ComfyUI/A1111 工作流单次只返回一张时未继续补齐的问题；调度层现按剩余张数继续生成，直到满足请求

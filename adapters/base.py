@@ -2,19 +2,85 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from enum import Enum
+from typing import Any, Literal, NoReturn
 
 from ..utils.commands import normalize_dedicated_command
 from ..utils.config import parse_bool, parse_int
 
 Mode = Literal["text_to_image", "image_to_image"]
 
+# Content/safety signals. Avoid bare tokens like "安全"/"harm"/"moderation"
+# (the latter also appears in "Unknown parameter: moderation").
 _SAFETY_ERROR_PATTERN = re.compile(
-    r"content[_\s-]?policy|moderation|safety|sensitive|sexual|"
-    r"sexually[_\s-]?explicit|blocked|harm|inappropriate|"
-    r"违反|敏感|审核|安全|色情",
+    r"content[_\s-]?(?:policy|moderation|filter)|"
+    r"moderation[_\s-]?(?:error|failed|filter|check|block|rejected)|"
+    r"safety[_\s-]?(?:filter|setting|system|check|block|violation)|"
+    r"blocked due to safety|"
+    r"sensitive(?:\s+content)?|"
+    r"sexually[_\s-]?explicit|"
+    r"inappropriate|"
+    r"prohibited[_\s-]?content|"
+    r"image[_\s-]?safety|"
+    r"blockreason|"
+    r"promptfeedback|"
+    r"违反|"
+    r"敏感|"
+    r"审核|"
+    r"内容安全|"
+    r"安全过滤|"
+    r"安全策略|"
+    r"安全拦截|"
+    r"色情",
     re.IGNORECASE,
 )
+
+_PARAM_UNSUPPORTED_PATTERN = re.compile(
+    r"unknown[_\s-]?(?:field|parameter|argument|property)|"
+    r"invalid[_\s-]?(?:parameter|value|argument|field|request)|"
+    r"unexpected[_\s-]?(?:keyword|field|argument)|"
+    r"does not support|"
+    r"unsupported|"
+    r"not (?:a )?valid|"
+    r"未支持|"
+    r"不支持的?参数|"
+    r"非法参数|"
+    r"无效参数|"
+    r"参数错误",
+    re.IGNORECASE,
+)
+
+_AUTH_OR_QUOTA_PATTERN = re.compile(
+    r"unauthorized|"
+    r"forbidden|"
+    r"invalid[_\s-]?api[_\s-]?key|"
+    r"authentication|"
+    r"permission|"
+    r"rate[_\s-]?limit|"
+    r"too many requests|"
+    r"quota|"
+    r"insufficient|"
+    r"billing|"
+    r"余额|"
+    r"额度|"
+    r"鉴权|"
+    r"未授权|"
+    r"权限|"
+    r"配额|"
+    r"超限|"
+    r"频率",
+    re.IGNORECASE,
+)
+
+
+class FailureClass(Enum):
+    """Classification of generation failures for bypass-chain recovery edges."""
+
+    CONTENT_BLOCKED = "content_blocked"
+    PARAM_UNSUPPORTED = "param_unsupported"
+    AUTH_OR_QUOTA = "auth_or_quota"
+    TRANSIENT = "transient"
+    UNKNOWN = "unknown"
 
 
 class GenerationError(Exception):
@@ -22,7 +88,7 @@ class GenerationError(Exception):
 
 
 class SensitiveContentError(GenerationError):
-    """Raised when content is blocked after moderation none→low fallback."""
+    """Raised when content remains blocked after the full bypass chain is exhausted."""
 
     def __init__(self, mode: Mode):
         super().__init__(sensitive_content_message(mode))
@@ -30,7 +96,39 @@ class SensitiveContentError(GenerationError):
 
 
 def is_safety_moderation_error(message: str) -> bool:
-    return bool(_SAFETY_ERROR_PATTERN.search(message or ""))
+    return classify_generation_failure(message) == FailureClass.CONTENT_BLOCKED
+
+
+def classify_generation_failure(
+    message: str,
+    *,
+    status: int | None = None,
+) -> FailureClass:
+    """Classify an upstream failure so adapters can pick the right recovery edge."""
+    text = (message or "").strip()
+    if status == 429:
+        return FailureClass.AUTH_OR_QUOTA
+    if status in {401, 403}:
+        # Some gateways reuse 403 for content policy; prefer safety signal when present.
+        if text and _SAFETY_ERROR_PATTERN.search(text):
+            return FailureClass.CONTENT_BLOCKED
+        return FailureClass.AUTH_OR_QUOTA
+    if status is not None and status >= 500:
+        return FailureClass.TRANSIENT
+
+    if not text:
+        return FailureClass.UNKNOWN
+
+    # Prefer explicit param-unsupported phrasing over bare keyword overlap.
+    if _PARAM_UNSUPPORTED_PATTERN.search(text):
+        return FailureClass.PARAM_UNSUPPORTED
+    if _SAFETY_ERROR_PATTERN.search(text):
+        return FailureClass.CONTENT_BLOCKED
+    if _AUTH_OR_QUOTA_PATTERN.search(text):
+        return FailureClass.AUTH_OR_QUOTA
+    if status is not None and 400 <= status < 500:
+        return FailureClass.PARAM_UNSUPPORTED
+    return FailureClass.UNKNOWN
 
 
 def sensitive_content_message(mode: Mode) -> str:
@@ -41,6 +139,18 @@ def sensitive_content_message(mode: Mode) -> str:
 
 def moderation_bypass_enabled(level: str, *, default: str = "auto") -> bool:
     return (level or default).lower() == "none"
+
+
+def raise_exhausted_generation_error(
+    mode: Mode,
+    last_error: str,
+    *,
+    content_blocked: bool,
+) -> NoReturn:
+    """Raise the final error after a generation attempt chain is exhausted."""
+    if content_blocked:
+        raise SensitiveContentError(mode)
+    raise GenerationError(last_error or "生成失败")
 
 
 @dataclass

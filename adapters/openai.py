@@ -11,12 +11,12 @@ import aiohttp
 from astrbot.api import logger
 
 from .base import (
+    FailureClass,
     GenerationError,
     ModelConfig,
-    SensitiveContentError,
-    is_safety_moderation_error,
+    classify_generation_failure,
     moderation_bypass_enabled,
-    sensitive_content_message,
+    raise_exhausted_generation_error,
 )
 from ..utils.storage import download_image, save_base64_image
 
@@ -42,7 +42,14 @@ class OpenAIAdapter:
         bypass_chain = moderation_bypass_enabled(model.moderation)
 
         last_error = "OpenAI 生图失败"
+        content_blocked = False
+        # On content-block, remaining moderation values share the same filter surface.
+        # Skip them and jump to chat endpoint when bypass is enabled.
+        skip_remaining_params = False
+
         for moderation in moderation_attempts:
+            if skip_remaining_params:
+                break
             body = dict(payload)
             if moderation is not None:
                 body["moderation"] = moderation
@@ -53,11 +60,18 @@ class OpenAIAdapter:
                     return paths
             except GenerationError as exc:
                 last_error = str(exc)
-                if bypass_chain and moderation == "low" and is_safety_moderation_error(last_error):
-                    raise SensitiveContentError("text_to_image") from exc
-                logger.warning(f"[OpenAI:{model.display_name}] 生图尝试 moderation={moderation} 失败: {exc}")
+                failure = classify_generation_failure(last_error)
+                logger.warning(
+                    f"[OpenAI:{model.display_name}] 生图尝试 moderation={moderation} "
+                    f"失败({failure.value}): {exc}"
+                )
+                if failure == FailureClass.AUTH_OR_QUOTA:
+                    raise GenerationError(last_error) from exc
+                if failure == FailureClass.CONTENT_BLOCKED:
+                    content_blocked = True
+                    if bypass_chain:
+                        skip_remaining_params = True
 
-        # 兼容部分网关仅支持 chat/completions 返回图片
         if bypass_chain:
             try:
                 paths = await self._text_to_image_via_chat(
@@ -67,8 +81,20 @@ class OpenAIAdapter:
                     return paths
             except GenerationError as exc:
                 last_error = str(exc)
+                failure = classify_generation_failure(last_error)
+                logger.warning(
+                    f"[OpenAI:{model.display_name}] chat 回退失败({failure.value}): {exc}"
+                )
+                if failure == FailureClass.CONTENT_BLOCKED:
+                    content_blocked = True
+                elif failure == FailureClass.AUTH_OR_QUOTA:
+                    raise GenerationError(last_error) from exc
 
-        raise GenerationError(last_error)
+        raise_exhausted_generation_error(
+            "text_to_image",
+            last_error,
+            content_blocked=content_blocked,
+        )
 
     async def image_to_image(
         self,
@@ -90,8 +116,12 @@ class OpenAIAdapter:
         except (ValueError, binascii.Error) as exc:
             raise GenerationError("输入图片不是有效的 base64 数据") from exc
         last_error = "OpenAI 改图失败"
+        content_blocked = False
+        skip_remaining_params = False
 
         for moderation in moderation_attempts:
+            if skip_remaining_params:
+                break
             form = aiohttp.FormData()
             form.add_field("model", model.model_name)
             form.add_field("prompt", prompt)
@@ -112,9 +142,17 @@ class OpenAIAdapter:
                     return paths
             except GenerationError as exc:
                 last_error = str(exc)
-                if bypass_chain and moderation == "low" and is_safety_moderation_error(last_error):
-                    raise SensitiveContentError("image_to_image") from exc
-                logger.warning(f"[OpenAI:{model.display_name}] 改图尝试 moderation={moderation} 失败: {exc}")
+                failure = classify_generation_failure(last_error)
+                logger.warning(
+                    f"[OpenAI:{model.display_name}] 改图尝试 moderation={moderation} "
+                    f"失败({failure.value}): {exc}"
+                )
+                if failure == FailureClass.AUTH_OR_QUOTA:
+                    raise GenerationError(last_error) from exc
+                if failure == FailureClass.CONTENT_BLOCKED:
+                    content_blocked = True
+                    if bypass_chain:
+                        skip_remaining_params = True
 
         if bypass_chain:
             try:
@@ -125,8 +163,20 @@ class OpenAIAdapter:
                     return paths
             except GenerationError as exc:
                 last_error = str(exc)
+                failure = classify_generation_failure(last_error)
+                logger.warning(
+                    f"[OpenAI:{model.display_name}] 改图 chat 回退失败({failure.value}): {exc}"
+                )
+                if failure == FailureClass.CONTENT_BLOCKED:
+                    content_blocked = True
+                elif failure == FailureClass.AUTH_OR_QUOTA:
+                    raise GenerationError(last_error) from exc
 
-        raise GenerationError(last_error)
+        raise_exhausted_generation_error(
+            "image_to_image",
+            last_error,
+            content_blocked=content_blocked,
+        )
 
     @staticmethod
     def _normalize_base_url(url: str) -> str:
