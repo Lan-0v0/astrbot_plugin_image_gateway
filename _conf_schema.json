@@ -170,7 +170,12 @@
             "type": "string",
             "default": ""
           },
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "hint": "跟随全局表示使用下方「全局消息伪造转发」配置；开启后会在生成完成时合并转发开始提示与图片",
@@ -372,9 +377,40 @@
             "type": "string",
             "default": ""
           },
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
-          "fake_forward_mode": {"description": "消息伪造转发", "hint": "默认跟随全局配置；可单独关闭或指定伪造身份", "type": "string", "default": "follow_global", "options": ["follow_global", "off", "bot_self", "requester", "custom_qq"], "labels": ["跟随全局", "关闭", "Bot自身", "生图要求者", "自定义QQ号"]},
-          "fake_forward_custom_qq": {"description": "自定义QQ号", "type": "string", "default": "", "condition": {"fake_forward_mode": "custom_qq"}},
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
+          "fake_forward_mode": {
+            "description": "消息伪造转发",
+            "hint": "默认跟随全局配置；可单独关闭或指定伪造身份",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
+          },
+          "fake_forward_custom_qq": {
+            "description": "自定义QQ号",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
+          },
           "send_strategy": {
             "description": "发送链路",
             "hint": "跟随全局表示使用最底部的「全局发送链路」配置；也可为该模型单独指定",
@@ -425,15 +461,31 @@
             "hint": "推荐优先使用预设。条目很多时，只需给重要模型选“最高/高/普通/低/最低”，无需一个个手填数字；只有非常特殊的排序需求才使用“自定义数值”",
             "type": "string",
             "default": "normal",
-            "options": ["highest", "high", "normal", "low", "lowest", "custom"],
-            "labels": ["最高", "高", "普通", "低", "最低", "自定义数值"]
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
           },
           "priority": {
             "description": "自定义优先级数值",
             "hint": "仅在“优先级”选择“自定义数值”时使用；数值越大越优先",
             "type": "int",
             "default": 10,
-            "condition": {"priority_preset": "custom"}
+            "condition": {
+              "priority_preset": "custom"
+            }
           },
           "url": {
             "description": "API 地址",
@@ -469,30 +521,61 @@
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
             "type": "string",
             "default": "both",
-            "options": ["text_to_image", "both", "image_to_image"],
-            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
+            ]
           },
           "quality": {
             "description": "提示词智能改写",
             "hint": "映射为 prompt_extend；high/auto 开启，low/medium 关闭",
             "type": "string",
             "default": "auto",
-            "options": ["auto", "high", "medium", "low"]
+            "options": [
+              "auto",
+              "high",
+              "medium",
+              "low"
+            ]
           },
           "size": {
             "description": "尺寸",
             "hint": "DashScope 使用宽*高格式，例如 1280*1280",
             "type": "string",
             "default": "auto",
-            "options": ["auto", "1280*1280", "1024*1024", "720*1280", "1280*720", "1536*1024", "1024*1536"]
+            "options": [
+              "auto",
+              "1280*1280",
+              "1024*1024",
+              "720*1280",
+              "1280*720",
+              "1536*1024",
+              "1024*1536"
+            ]
           },
           "moderation": {
             "description": "水印",
             "hint": "none/low 不添加水印；high/auto 按接口默认处理",
             "type": "string",
             "default": "none",
-            "options": ["none", "low", "high", "auto"],
-            "labels": ["关闭水印", "低", "高", "自动"]
+            "options": [
+              "none",
+              "low",
+              "high",
+              "auto"
+            ],
+            "labels": [
+              "关闭水印",
+              "低",
+              "高",
+              "自动"
+            ]
           },
           "negative_prompt": {
             "description": "反向提示词",
@@ -505,8 +588,14 @@
             "hint": "仅改图且使用 wanx 系列时生效；repaint=内容参考，refonly=风格参考",
             "type": "string",
             "default": "repaint",
-            "options": ["repaint", "refonly"],
-            "labels": ["内容参考 (repaint)", "风格参考 (refonly)"]
+            "options": [
+              "repaint",
+              "refonly"
+            ],
+            "labels": [
+              "内容参考 (repaint)",
+              "风格参考 (refonly)"
+            ]
           },
           "ref_strength": {
             "description": "参考图强度",
@@ -520,26 +609,59 @@
             "type": "string",
             "default": ""
           },
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "off", "bot_self", "requester", "custom_qq"],
-            "labels": ["跟随全局", "关闭", "Bot自身", "生图要求者", "自定义QQ号"]
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
           },
           "fake_forward_custom_qq": {
             "description": "自定义QQ号",
             "type": "string",
             "default": "",
-            "condition": {"fake_forward_mode": "custom_qq"}
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
           },
           "send_strategy": {
             "description": "发送链路",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "direct_first", "event_send_first", "context_send_first", "platform_client_first", "result_pipeline_only"],
-            "labels": ["跟随全局", "直连优先（默认）", "事件发送优先", "上下文发送优先", "平台客户端优先", "仅结果管道"]
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
           }
         }
       },
@@ -548,70 +670,188 @@
         "hint": "火山引擎方舟 Ark 图像生成（OpenAI Images 兼容协议）",
         "display_item": "display_name",
         "items": {
-          "provider_label": {"description": "类型", "type": "string", "default": "火山引擎", "invisible": true},
-          "display_name": {"description": "显示名称", "type": "string", "default": "火山引擎模型"},
-          "enabled": {"description": "启用", "type": "bool", "default": true},
+          "provider_label": {
+            "description": "类型",
+            "type": "string",
+            "default": "火山引擎",
+            "invisible": true
+          },
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": "火山引擎模型"
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
           "priority_preset": {
             "description": "优先级",
             "type": "string",
             "default": "normal",
-            "options": ["highest", "high", "normal", "low", "lowest", "custom"],
-            "labels": ["最高", "高", "普通", "低", "最低", "自定义数值"]
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
           },
-          "priority": {"description": "自定义优先级数值", "type": "int", "default": 10, "condition": {"priority_preset": "custom"}},
+          "priority": {
+            "description": "自定义优先级数值",
+            "type": "int",
+            "default": 10,
+            "condition": {
+              "priority_preset": "custom"
+            }
+          },
           "url": {
             "description": "API 地址",
             "hint": "例如 https://ark.cn-beijing.volces.com/api/v3",
             "type": "string",
             "default": "https://ark.cn-beijing.volces.com/api/v3"
           },
-          "apikey": {"description": "API Key", "type": "string", "default": ""},
+          "apikey": {
+            "description": "API Key",
+            "type": "string",
+            "default": ""
+          },
           "model_name": {
             "description": "模型名称",
             "hint": "例如 doubao-seedream-3-0-t2i-250415",
             "type": "string",
             "default": "doubao-seedream-3-0-t2i-250415"
           },
-          "retry_count": {"description": "重试次数", "type": "int", "default": -1},
-          "max_generation_count": {"description": "单次请求最大生成张数", "type": "int", "default": -1},
+          "retry_count": {
+            "description": "重试次数",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "type": "int",
+            "default": -1
+          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
             "type": "string",
             "default": "both",
-            "options": ["text_to_image", "both", "image_to_image"],
-            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
+            ]
           },
-          "quality": {"description": "画质", "type": "string", "default": "high", "options": ["auto", "high", "medium", "low"]},
+          "quality": {
+            "description": "画质",
+            "type": "string",
+            "default": "high",
+            "options": [
+              "auto",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
           "size": {
             "description": "尺寸",
             "type": "string",
             "default": "auto",
-            "options": ["auto", "1024x1024", "1536x1024", "1024x1536", "2048x2048"]
+            "options": [
+              "auto",
+              "1024x1024",
+              "1536x1024",
+              "1024x1536",
+              "2048x2048"
+            ]
           },
           "response_format": {
             "description": "返回格式",
             "type": "string",
             "default": "url",
-            "options": ["url", "b64_json"],
-            "labels": ["URL", "Base64"]
+            "options": [
+              "url",
+              "b64_json"
+            ],
+            "labels": [
+              "URL",
+              "Base64"
+            ]
           },
-          "seed": {"description": "随机种子", "type": "string", "default": ""},
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "seed": {
+            "description": "随机种子",
+            "type": "string",
+            "default": ""
+          },
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "off", "bot_self", "requester", "custom_qq"],
-            "labels": ["跟随全局", "关闭", "Bot自身", "生图要求者", "自定义QQ号"]
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
           },
-          "fake_forward_custom_qq": {"description": "自定义QQ号", "type": "string", "default": "", "condition": {"fake_forward_mode": "custom_qq"}},
+          "fake_forward_custom_qq": {
+            "description": "自定义QQ号",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
+          },
           "send_strategy": {
             "description": "发送链路",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "direct_first", "event_send_first", "context_send_first", "platform_client_first", "result_pipeline_only"],
-            "labels": ["跟随全局", "直连优先（默认）", "事件发送优先", "上下文发送优先", "平台客户端优先", "仅结果管道"]
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
           }
         }
       },
@@ -620,82 +860,199 @@
         "hint": "MiniMax 图像生成 API（文生图 / 图生图）",
         "display_item": "display_name",
         "items": {
-          "provider_label": {"description": "类型", "type": "string", "default": "MiniMax", "invisible": true},
-          "display_name": {"description": "显示名称", "type": "string", "default": "MiniMax 模型"},
-          "enabled": {"description": "启用", "type": "bool", "default": true},
+          "provider_label": {
+            "description": "类型",
+            "type": "string",
+            "default": "MiniMax",
+            "invisible": true
+          },
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": "MiniMax 模型"
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
           "priority_preset": {
             "description": "优先级",
             "type": "string",
             "default": "normal",
-            "options": ["highest", "high", "normal", "low", "lowest", "custom"],
-            "labels": ["最高", "高", "普通", "低", "最低", "自定义数值"]
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
           },
-          "priority": {"description": "自定义优先级数值", "type": "int", "default": 10, "condition": {"priority_preset": "custom"}},
+          "priority": {
+            "description": "自定义优先级数值",
+            "type": "int",
+            "default": 10,
+            "condition": {
+              "priority_preset": "custom"
+            }
+          },
           "url": {
             "description": "API 地址",
             "hint": "例如 https://api.minimaxi.com/v1",
             "type": "string",
             "default": "https://api.minimaxi.com/v1"
           },
-          "apikey": {"description": "API Key", "type": "string", "default": ""},
+          "apikey": {
+            "description": "API Key",
+            "type": "string",
+            "default": ""
+          },
           "model_name": {
             "description": "模型名称",
             "hint": "例如 image-01、image-01-live",
             "type": "string",
             "default": "image-01"
           },
-          "retry_count": {"description": "重试次数", "type": "int", "default": -1},
-          "max_generation_count": {"description": "单次请求最大生成张数", "type": "int", "default": -1},
+          "retry_count": {
+            "description": "重试次数",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "type": "int",
+            "default": -1
+          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
             "type": "string",
             "default": "both",
-            "options": ["text_to_image", "both", "image_to_image"],
-            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
+            ]
           },
           "aspect_ratio": {
             "description": "宽高比",
             "hint": "留空 auto 时尝试使用尺寸字段",
             "type": "string",
             "default": "1:1",
-            "options": ["auto", "1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"]
+            "options": [
+              "auto",
+              "1:1",
+              "16:9",
+              "4:3",
+              "3:2",
+              "2:3",
+              "3:4",
+              "9:16",
+              "21:9"
+            ]
           },
           "size": {
             "description": "自定义宽高（像素）",
             "hint": "仅 image-01 支持；需为 8 的倍数，例如 1024x1024",
             "type": "string",
             "default": "auto",
-            "options": ["auto", "1024x1024", "1280x720", "1536x864"]
+            "options": [
+              "auto",
+              "1024x1024",
+              "1280x720",
+              "1536x864"
+            ]
           },
           "response_format": {
             "description": "返回格式",
             "type": "string",
             "default": "url",
-            "options": ["url", "base64"],
-            "labels": ["URL", "Base64"]
+            "options": [
+              "url",
+              "base64"
+            ],
+            "labels": [
+              "URL",
+              "Base64"
+            ]
           },
           "prompt_optimizer": {
             "description": "Prompt 自动优化",
             "type": "bool",
             "default": false
           },
-          "seed": {"description": "随机种子", "type": "string", "default": ""},
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "seed": {
+            "description": "随机种子",
+            "type": "string",
+            "default": ""
+          },
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "off", "bot_self", "requester", "custom_qq"],
-            "labels": ["跟随全局", "关闭", "Bot自身", "生图要求者", "自定义QQ号"]
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
           },
-          "fake_forward_custom_qq": {"description": "自定义QQ号", "type": "string", "default": "", "condition": {"fake_forward_mode": "custom_qq"}},
+          "fake_forward_custom_qq": {
+            "description": "自定义QQ号",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
+          },
           "send_strategy": {
             "description": "发送链路",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "direct_first", "event_send_first", "context_send_first", "platform_client_first", "result_pipeline_only"],
-            "labels": ["跟随全局", "直连优先（默认）", "事件发送优先", "上下文发送优先", "平台客户端优先", "仅结果管道"]
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
           }
         }
       },
@@ -704,63 +1061,174 @@
         "hint": "智谱 CogView 图像生成（OpenAI Images 兼容协议）",
         "display_item": "display_name",
         "items": {
-          "provider_label": {"description": "类型", "type": "string", "default": "智谱", "invisible": true},
-          "display_name": {"description": "显示名称", "type": "string", "default": "智谱 CogView"},
-          "enabled": {"description": "启用", "type": "bool", "default": true},
+          "provider_label": {
+            "description": "类型",
+            "type": "string",
+            "default": "智谱",
+            "invisible": true
+          },
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": "智谱 CogView"
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
           "priority_preset": {
             "description": "优先级",
             "type": "string",
             "default": "normal",
-            "options": ["highest", "high", "normal", "low", "lowest", "custom"],
-            "labels": ["最高", "高", "普通", "低", "最低", "自定义数值"]
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
           },
-          "priority": {"description": "自定义优先级数值", "type": "int", "default": 10, "condition": {"priority_preset": "custom"}},
+          "priority": {
+            "description": "自定义优先级数值",
+            "type": "int",
+            "default": 10,
+            "condition": {
+              "priority_preset": "custom"
+            }
+          },
           "url": {
             "description": "API 地址",
             "hint": "例如 https://open.bigmodel.cn/api/paas/v4",
             "type": "string",
             "default": "https://open.bigmodel.cn/api/paas/v4"
           },
-          "apikey": {"description": "API Key", "type": "string", "default": ""},
+          "apikey": {
+            "description": "API Key",
+            "type": "string",
+            "default": ""
+          },
           "model_name": {
             "description": "模型名称",
             "hint": "例如 cogview-4-250304、cogview-3-plus",
             "type": "string",
             "default": "cogview-4-250304"
           },
-          "retry_count": {"description": "重试次数", "type": "int", "default": -1},
-          "max_generation_count": {"description": "单次请求最大生成张数", "type": "int", "default": -1},
+          "retry_count": {
+            "description": "重试次数",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "type": "int",
+            "default": -1
+          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
             "type": "string",
             "default": "both",
-            "options": ["text_to_image", "both", "image_to_image"],
-            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
+            ]
           },
-          "quality": {"description": "画质", "type": "string", "default": "high", "options": ["auto", "high", "medium", "low"]},
+          "quality": {
+            "description": "画质",
+            "type": "string",
+            "default": "high",
+            "options": [
+              "auto",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
           "size": {
             "description": "尺寸",
             "type": "string",
             "default": "auto",
-            "options": ["auto", "1024x1024", "1440x720", "720x1440"]
+            "options": [
+              "auto",
+              "1024x1024",
+              "1440x720",
+              "720x1440"
+            ]
           },
-          "seed": {"description": "随机种子", "type": "string", "default": ""},
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "seed": {
+            "description": "随机种子",
+            "type": "string",
+            "default": ""
+          },
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "off", "bot_self", "requester", "custom_qq"],
-            "labels": ["跟随全局", "关闭", "Bot自身", "生图要求者", "自定义QQ号"]
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
           },
-          "fake_forward_custom_qq": {"description": "自定义QQ号", "type": "string", "default": "", "condition": {"fake_forward_mode": "custom_qq"}},
+          "fake_forward_custom_qq": {
+            "description": "自定义QQ号",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
+          },
           "send_strategy": {
             "description": "发送链路",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "direct_first", "event_send_first", "context_send_first", "platform_client_first", "result_pipeline_only"],
-            "labels": ["跟随全局", "直连优先（默认）", "事件发送优先", "上下文发送优先", "平台客户端优先", "仅结果管道"]
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
           }
         }
       },
@@ -769,46 +1237,118 @@
         "hint": "腾讯混元图像生成（OpenAI Images 兼容协议）",
         "display_item": "display_name",
         "items": {
-          "provider_label": {"description": "类型", "type": "string", "default": "腾讯混元", "invisible": true},
-          "display_name": {"description": "显示名称", "type": "string", "default": "混元图像模型"},
-          "enabled": {"description": "启用", "type": "bool", "default": true},
+          "provider_label": {
+            "description": "类型",
+            "type": "string",
+            "default": "腾讯混元",
+            "invisible": true
+          },
+          "display_name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": "混元图像模型"
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
           "priority_preset": {
             "description": "优先级",
             "type": "string",
             "default": "normal",
-            "options": ["highest", "high", "normal", "low", "lowest", "custom"],
-            "labels": ["最高", "高", "普通", "低", "最低", "自定义数值"]
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
           },
-          "priority": {"description": "自定义优先级数值", "type": "int", "default": 10, "condition": {"priority_preset": "custom"}},
+          "priority": {
+            "description": "自定义优先级数值",
+            "type": "int",
+            "default": 10,
+            "condition": {
+              "priority_preset": "custom"
+            }
+          },
           "url": {
             "description": "API 地址",
             "hint": "例如 https://api.hunyuan.cloud.tencent.com/v1",
             "type": "string",
             "default": "https://api.hunyuan.cloud.tencent.com/v1"
           },
-          "apikey": {"description": "API Key", "type": "string", "default": ""},
+          "apikey": {
+            "description": "API Key",
+            "type": "string",
+            "default": ""
+          },
           "model_name": {
             "description": "模型名称",
             "hint": "例如 hunyuan-image、hunyuan-image-lite",
             "type": "string",
             "default": "hunyuan-image"
           },
-          "retry_count": {"description": "重试次数", "type": "int", "default": -1},
-          "max_generation_count": {"description": "单次请求最大生成张数", "type": "int", "default": -1},
+          "retry_count": {
+            "description": "重试次数",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "type": "int",
+            "default": -1
+          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
             "type": "string",
             "default": "both",
-            "options": ["text_to_image", "both", "image_to_image"],
-            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
+            ]
           },
-          "quality": {"description": "画质", "type": "string", "default": "high", "options": ["auto", "high", "medium", "low"]},
+          "quality": {
+            "description": "画质",
+            "type": "string",
+            "default": "high",
+            "options": [
+              "auto",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
           "size": {
             "description": "尺寸/宽高比",
             "type": "string",
             "default": "auto",
-            "options": ["auto", "1024x1024", "768x1024", "1024x768", "1:1", "16:9", "9:16"]
+            "options": [
+              "auto",
+              "1024x1024",
+              "768x1024",
+              "1024x768",
+              "1:1",
+              "16:9",
+              "9:16"
+            ]
           },
           "revision": {
             "description": "模型版本",
@@ -816,23 +1356,98 @@
             "type": "string",
             "default": ""
           },
-          "seed": {"description": "随机种子", "type": "string", "default": ""},
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "seed": {
+            "description": "随机种子",
+            "type": "string",
+            "default": ""
+          },
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "off", "bot_self", "requester", "custom_qq"],
-            "labels": ["跟随全局", "关闭", "Bot自身", "生图要求者", "自定义QQ号"]
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
           },
-          "fake_forward_custom_qq": {"description": "自定义QQ号", "type": "string", "default": "", "condition": {"fake_forward_mode": "custom_qq"}},
+          "fake_forward_custom_qq": {
+            "description": "自定义QQ号",
+            "type": "string",
+            "default": "",
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
+          },
           "send_strategy": {
             "description": "发送链路",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "direct_first", "event_send_first", "context_send_first", "platform_client_first", "result_pipeline_only"],
-            "labels": ["跟随全局", "直连优先（默认）", "事件发送优先", "上下文发送优先", "平台客户端优先", "仅结果管道"]
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
           }
+        }
+      }
+    }
+  },
+  "api_size_auto_llm": {
+    "description": "API auto模式LLM尺寸判定",
+    "hint": "仅对图像生成模型列表中 size=auto 的 API 条目生效：规则无法从提示词解析出分辨率时，是否再用 LLM 判断口语化尺寸要求。工作流不受影响。",
+    "type": "object",
+    "items": {
+      "mode": {
+        "description": "LLM 使用方式",
+        "hint": "不使用LLM：仅规则解析；跟随当前聊天LLM：使用会话当前聊天模型；自定义AstrBot已有LLM：指定下方提供商",
+        "type": "string",
+        "default": "follow_chat",
+        "options": [
+          "off",
+          "follow_chat",
+          "custom"
+        ],
+        "labels": [
+          "不使用LLM",
+          "跟随当前聊天LLM",
+          "自定义AstrBot已有LLM"
+        ]
+      },
+      "llm_provider_id": {
+        "description": "LLM 提供商",
+        "hint": "选择 AstrBot 中已配置的聊天模型提供商",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+          "mode": "custom"
         }
       }
     }
@@ -937,7 +1552,12 @@
             "type": "text",
             "default": ""
           },
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "hint": "跟随全局表示使用下方「全局消息伪造转发」配置；开启后会在生成完成时合并转发开始提示与图片",
@@ -1004,29 +1624,67 @@
             "type": "string",
             "default": "a1111_workflow"
           },
-          "enabled": {"description": "启用", "type": "bool", "default": true},
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
           "priority_preset": {
             "description": "优先级",
             "type": "string",
             "default": "normal",
-            "options": ["highest", "high", "normal", "low", "lowest", "custom"],
-            "labels": ["最高", "高", "普通", "低", "最低", "自定义数值"]
+            "options": [
+              "highest",
+              "high",
+              "normal",
+              "low",
+              "lowest",
+              "custom"
+            ],
+            "labels": [
+              "最高",
+              "高",
+              "普通",
+              "低",
+              "最低",
+              "自定义数值"
+            ]
           },
           "priority": {
             "description": "自定义优先级数值",
             "type": "int",
             "default": 10,
-            "condition": {"priority_preset": "custom"}
+            "condition": {
+              "priority_preset": "custom"
+            }
           },
-          "retry_count": {"description": "重试次数", "hint": "-1 表示使用全局默认", "type": "int", "default": -1},
-          "max_generation_count": {"description": "单次请求最大生成张数", "hint": "-1 表示使用全局默认", "type": "int", "default": -1},
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "A1111 支持 txt2img 与 img2img；双模式工作流可通过 mode_switch_* 绑定切换 denoise 等参数",
             "type": "string",
             "default": "text_to_image",
-            "options": ["text_to_image", "both", "image_to_image"],
-            "labels": ["仅文生图", "文生图 + 改图", "仅改图"]
+            "options": [
+              "text_to_image",
+              "both",
+              "image_to_image"
+            ],
+            "labels": [
+              "仅文生图",
+              "文生图 + 改图",
+              "仅改图"
+            ]
           },
           "runtime_base_url_override": {
             "description": "WebUI 地址覆盖",
@@ -1046,26 +1704,59 @@
             "type": "text",
             "default": "{\n  \"prompt\": \"\",\n  \"negative_prompt\": \"\",\n  \"steps\": 20,\n  \"cfg_scale\": 7,\n  \"width\": 512,\n  \"height\": 512,\n  \"sampler_name\": \"Euler\",\n  \"seed\": -1\n}"
           },
-          "dedicated_command": {"description": "专属指令", "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图", "type": "string", "default": ""},
+          "dedicated_command": {
+            "description": "专属指令",
+            "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
+            "type": "string",
+            "default": ""
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "off", "bot_self", "requester", "custom_qq"],
-            "labels": ["跟随全局", "关闭", "Bot自身", "生图要求者", "自定义QQ号"]
+            "options": [
+              "follow_global",
+              "off",
+              "bot_self",
+              "requester",
+              "custom_qq"
+            ],
+            "labels": [
+              "跟随全局",
+              "关闭",
+              "Bot自身",
+              "生图要求者",
+              "自定义QQ号"
+            ]
           },
           "fake_forward_custom_qq": {
             "description": "自定义QQ号",
             "type": "string",
             "default": "",
-            "condition": {"fake_forward_mode": "custom_qq"}
+            "condition": {
+              "fake_forward_mode": "custom_qq"
+            }
           },
           "send_strategy": {
             "description": "发送链路",
             "type": "string",
             "default": "follow_global",
-            "options": ["follow_global", "direct_first", "event_send_first", "context_send_first", "platform_client_first", "result_pipeline_only"],
-            "labels": ["跟随全局", "直连优先（默认）", "事件发送优先", "上下文发送优先", "平台客户端优先", "仅结果管道"]
+            "options": [
+              "follow_global",
+              "direct_first",
+              "event_send_first",
+              "context_send_first",
+              "platform_client_first",
+              "result_pipeline_only"
+            ],
+            "labels": [
+              "跟随全局",
+              "直连优先（默认）",
+              "事件发送优先",
+              "上下文发送优先",
+              "平台客户端优先",
+              "仅结果管道"
+            ]
           }
         }
       }

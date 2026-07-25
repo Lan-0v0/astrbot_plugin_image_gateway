@@ -21,6 +21,7 @@ from .workflow_config import WorkflowConfig, WorkflowNodeBinding, WorkflowRuntim
 from .a1111_runner import A1111WorkflowRunner
 from .workflow_runner import ComfyUIWorkflowRunner
 from ..utils.config import parse_int
+from ..utils.resolution import apply_prompt_resolution_if_auto
 
 Mode = Literal["text_to_image", "image_to_image"]
 
@@ -102,6 +103,7 @@ class GenerationService:
         count: int = 1,
         input_images: list[str] | None = None,
         dedicated_command: str | None = None,
+        size_override: str | None = None,
     ) -> tuple[list[Path], str, SendStrategy, FakeForwardConfig]:
         targets = self._select_targets(dedicated_command)
         requested_count = self._normalize_requested_count(mode, count)
@@ -152,6 +154,7 @@ class GenerationService:
                             requested_count=requested_count,
                             input_images=input_images,
                             session=session,
+                            size_override=size_override,
                         )
 
                         if paths:
@@ -208,6 +211,7 @@ class GenerationService:
         requested_count: int,
         input_images: list[str] | None,
         session: aiohttp.ClientSession,
+        size_override: str | None = None,
     ) -> list[Path]:
         paths: list[Path] = []
         while len(paths) < requested_count:
@@ -219,6 +223,7 @@ class GenerationService:
                 requested_count=remaining_count,
                 input_images=input_images,
                 session=session,
+                size_override=size_override,
             )
             if not batch_paths:
                 raise GenerationError(f"{target.display_name} 未返回任何图片")
@@ -234,6 +239,7 @@ class GenerationService:
         requested_count: int,
         input_images: list[str] | None,
         session: aiohttp.ClientSession,
+        size_override: str | None = None,
     ) -> list[Path]:
         if isinstance(target, WorkflowConfig):
             node_bindings = self._get_workflow_node_bindings(target.workflow_id)
@@ -265,10 +271,27 @@ class GenerationService:
                 session,
             )
 
+        # Workflows keep their own fixed / bound sizes. For API models only:
+        # when entry size is "auto", optionally promote an explicit resolution
+        # from pre-resolution (regex/LLM) or a deterministic prompt parse.
+        api_target = apply_prompt_resolution_if_auto(
+            target,
+            prompt,
+            size_override=size_override,
+        )
+        if api_target.size != target.size:
+            logger.info(
+                f"[{target.display_name}] size=auto，使用提示词分辨率: {api_target.size}"
+            )
+
         adapter = get_adapter(target.provider)
         if mode == "text_to_image":
-            return await adapter.text_to_image(prompt, requested_count, target, self.output_dir, session)
-        return await adapter.image_to_image(prompt, input_images or [], target, self.output_dir, session)
+            return await adapter.text_to_image(
+                prompt, requested_count, api_target, self.output_dir, session
+            )
+        return await adapter.image_to_image(
+            prompt, input_images or [], api_target, self.output_dir, session
+        )
 
     def validate_request_count(
         self,

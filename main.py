@@ -27,6 +27,7 @@ from .utils.commands import (
 )
 from .utils.config import parse_bool, parse_int
 from .utils.messages import collect_input_images, parse_command_text, parse_count_and_prompt
+from .utils.resolution import normalize_resolution_value, parse_resolution_from_prompt
 
 PLUGIN_NAME = "astrbot_plugin_image_gateway"
 DEFAULT_START_MESSAGES = ["开始生成0v0~"]
@@ -45,6 +46,20 @@ LLM_PROMPT_EXPANSION_TEMPLATE = (
     "保留核心主题，补充画面细节、风格、光影与构图。"
     "只输出扩展后的提示词，不要解释，不要换行分段，不要加引号。\n\n"
     "原始提示词：{prompt}"
+)
+LLM_RESOLUTION_SYSTEM_PROMPT = (
+    "你是图像生成请求解析器，只负责判断用户是否明确要求了输出图片的像素分辨率。"
+)
+LLM_RESOLUTION_PROMPT_TEMPLATE = (
+    "判断下面用户提示词是否明确要求了输出图片的像素宽高/分辨率。\n"
+    "要求：\n"
+    "1. 若用户明确给出了像素尺寸（含中文数字、口语、中英混写、1k/2k 等），只输出 WIDTHxHEIGHT，"
+    "例如 1024x1024 或 1280x720。正方形可写成边长x边长。\n"
+    "2. 常见映射：1k/1K≈1024x1024；2k/2K≈2048x2048；约数可取最接近的常见像素。\n"
+    "3. 若只提到横图/竖图/比例/高清，但没有像素尺寸含义，输出 none。\n"
+    "4. 若完全没有尺寸要求，输出 none。\n"
+    "5. 不要解释，不要引号，不要其它文字，不要换行。\n\n"
+    "用户提示词：\n{prompt}"
 )
 
 _DEDICATED_COMMAND_NAMES: set[str] = set()
@@ -78,6 +93,25 @@ class LlmPromptExpansionConfig:
     custom_persona_prompt: str = DEFAULT_LLM_PROMPT_EXPANSION_PERSONA
 
 
+# API size=auto resolution LLM modes for config panel.
+API_SIZE_AUTO_LLM_MODE_OFF = "off"
+API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT = "follow_chat"
+API_SIZE_AUTO_LLM_MODE_CUSTOM = "custom"
+API_SIZE_AUTO_LLM_MODES = {
+    API_SIZE_AUTO_LLM_MODE_OFF,
+    API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT,
+    API_SIZE_AUTO_LLM_MODE_CUSTOM,
+}
+
+
+@dataclass(slots=True)
+class ApiSizeAutoLlmConfig:
+    """How to resolve natural-language size when API model size is auto."""
+
+    mode: str = API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT
+    llm_provider_id: str = ""
+
+
 @dataclass(slots=True)
 class StartMessageDispatchResult:
     text: str
@@ -89,7 +123,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.1.2",
+    "2.1.3",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -168,6 +202,9 @@ class ImageGatewayPlugin(Star):
         )
         self.llm_prompt_expansion_config = self._load_llm_prompt_expansion_config(
             self.plugin_config.get("llm_prompt_expansion")
+        )
+        self.api_size_auto_llm_config = self._load_api_size_auto_llm_config(
+            self.plugin_config.get("api_size_auto_llm")
         )
 
     def _refresh_dedicated_commands(self) -> None:
@@ -250,6 +287,22 @@ class ImageGatewayPlugin(Star):
             llm_persona_source=llm_persona_source,
             llm_custom_persona_prompt=llm_custom_persona_prompt,
         )
+
+    def _load_api_size_auto_llm_config(
+        self,
+        raw_config: Any,
+    ) -> ApiSizeAutoLlmConfig:
+        config_dict = raw_config if isinstance(raw_config, dict) else {}
+
+        mode = str(config_dict.get("mode") or API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT).strip().lower()
+        if mode not in API_SIZE_AUTO_LLM_MODES:
+            mode = API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT
+
+        llm_provider_id = str(config_dict.get("llm_provider_id") or "").strip()
+        if mode != API_SIZE_AUTO_LLM_MODE_CUSTOM:
+            llm_provider_id = ""
+
+        return ApiSizeAutoLlmConfig(mode=mode, llm_provider_id=llm_provider_id)
 
     def _load_llm_prompt_expansion_config(
         self,
@@ -759,6 +812,9 @@ class ImageGatewayPlugin(Star):
             yield event.plain_result(str(exc))
             return
 
+        # Resolve size from the original user prompt (before expansion), so
+        # expanded artistic text does not invent a fake resolution.
+        size_override = await self._resolve_size_from_prompt(event, prompt)
         effective_prompt = await self._resolve_generation_prompt(event, prompt)
 
         start_message = await self._send_start_message(event, success_label)
@@ -781,6 +837,7 @@ class ImageGatewayPlugin(Star):
                 "prompt": effective_prompt,
                 "count": count,
                 "input_images": input_images,
+                "size_override": size_override,
             }
             if dedicated_command:
                 generation_kwargs["dedicated_command"] = dedicated_command
@@ -1021,6 +1078,105 @@ class ImageGatewayPlugin(Star):
 
         logger.warning("LLM 提示词扩展失败，回退原始提示词")
         return original_prompt
+
+    async def _resolve_size_from_prompt(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+    ) -> str | None:
+        """Resolve output size for API models with size=auto.
+
+        Strategy:
+        1. Deterministic regex/fast path for common ``WxH`` spellings.
+        2. If not found and panel mode allows LLM, ask that LLM to judge
+           natural-language resolution requests.
+        3. On LLM disabled / failure / none, return None and keep auto behavior.
+        """
+        original_prompt = str(prompt or "").strip()
+        if not original_prompt:
+            return None
+
+        regex_size = parse_resolution_from_prompt(original_prompt)
+        if regex_size:
+            logger.info(f"从提示词规则解析分辨率: {regex_size}")
+            return regex_size
+
+        size_llm_config = getattr(
+            self,
+            "api_size_auto_llm_config",
+            ApiSizeAutoLlmConfig(),
+        )
+        if size_llm_config.mode == API_SIZE_AUTO_LLM_MODE_OFF:
+            return None
+
+        llm_size = await self._resolve_size_with_llm(event, original_prompt)
+        if llm_size:
+            logger.info(f"从提示词 LLM 判断分辨率: {llm_size}")
+            return llm_size
+        return None
+
+    async def _resolve_size_with_llm(
+        self,
+        event: AstrMessageEvent,
+        prompt: str,
+    ) -> str | None:
+        provider_id = self._resolve_resolution_llm_provider_id(event)
+        if not provider_id:
+            logger.debug("未找到可用的 LLM 提供商，跳过分辨率 LLM 判断")
+            return None
+
+        try:
+            llm_response = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=LLM_RESOLUTION_PROMPT_TEMPLATE.format(prompt=prompt),
+                system_prompt=LLM_RESOLUTION_SYSTEM_PROMPT,
+            )
+        except Exception as exc:
+            logger.warning(f"LLM 分辨率判断失败: {exc}")
+            return None
+
+        completion_text = getattr(llm_response, "completion_text", "") or ""
+        return normalize_resolution_value(completion_text)
+
+    def _resolve_resolution_llm_provider_id(self, event: AstrMessageEvent) -> str | None:
+        size_llm_config = getattr(
+            self,
+            "api_size_auto_llm_config",
+            ApiSizeAutoLlmConfig(),
+        )
+        mode = size_llm_config.mode
+
+        if mode == API_SIZE_AUTO_LLM_MODE_OFF:
+            return None
+
+        if mode == API_SIZE_AUTO_LLM_MODE_CUSTOM:
+            configured_provider_id = str(size_llm_config.llm_provider_id or "").strip()
+            if configured_provider_id:
+                return configured_provider_id
+            logger.warning(
+                "API auto模式LLM尺寸判定 已选自定义提供商，但未选择 AstrBot LLM 提供商"
+            )
+            return None
+
+        # follow_chat: session current chat LLM, then first available provider.
+        return self._resolve_current_chat_provider_id(event)
+
+    def _resolve_current_chat_provider_id(self, event: AstrMessageEvent) -> str | None:
+        try:
+            current_provider = self.context.get_using_provider(event.unified_msg_origin)
+            if current_provider:
+                return current_provider.meta().id
+        except Exception as exc:
+            logger.warning(f"获取当前聊天 LLM 提供商失败: {exc}")
+
+        try:
+            available_providers = self.context.get_all_providers()
+            if available_providers:
+                return available_providers[0].meta().id
+        except Exception as exc:
+            logger.warning(f"获取可用提供商列表失败: {exc}")
+
+        return None
 
     async def _expand_prompt_with_llm(
         self,

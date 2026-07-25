@@ -166,6 +166,10 @@ from astrbot_plugin_image_gateway.adapters.hunyuan import HunyuanAdapter  # noqa
 from astrbot_plugin_image_gateway.adapters.volcengine import VolcengineAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.adapters.zhipu import ZhipuAdapter  # noqa: E402
 from astrbot_plugin_image_gateway.main import (  # noqa: E402
+    API_SIZE_AUTO_LLM_MODE_CUSTOM,
+    API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT,
+    API_SIZE_AUTO_LLM_MODE_OFF,
+    ApiSizeAutoLlmConfig,
     DedicatedCommandFilter,
     DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
     DEFAULT_LLM_PROMPT_EXPANSION_PERSONA,
@@ -216,6 +220,11 @@ from astrbot_plugin_image_gateway.utils.storage import save_base64_image  # noqa
 from astrbot_plugin_image_gateway.utils.messages import (  # noqa: E402
     parse_command_text,
     parse_count_and_prompt,
+)
+from astrbot_plugin_image_gateway.utils.resolution import (  # noqa: E402
+    apply_prompt_resolution_if_auto,
+    normalize_resolution_value,
+    parse_resolution_from_prompt,
 )
 
 
@@ -664,6 +673,139 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effective_fake_forward.mode, FakeForwardMode.REQUESTER.value)
         self.assertEqual(effective_fake_forward.custom_qq, "")
 
+    async def test_api_auto_size_uses_resolution_from_prompt(self) -> None:
+        model = ModelConfig(
+            provider="openai",
+            display_name="AutoSize",
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name="test-model",
+            size="auto",
+        )
+        service = GenerationService(
+            [model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        captured: dict[str, Any] = {}
+
+        async def capture_text_to_image(prompt, count, target, output_dir, session):
+            captured["prompt"] = prompt
+            captured["size"] = target.size
+            return [Path("generated.png")]
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=types.SimpleNamespace(
+                    text_to_image=capture_text_to_image,
+                    image_to_image=self.raise_backend_error,
+                ),
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            await service.generate(
+                mode="text_to_image",
+                prompt="1024x1024分辨率。两位女主kiss，白色简约背景",
+            )
+
+        self.assertEqual(captured["size"], "1024x1024")
+        self.assertEqual(model.size, "auto")
+
+    async def test_api_auto_size_prefers_size_override_from_llm(self) -> None:
+        model = ModelConfig(
+            provider="openai",
+            display_name="AutoSize",
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name="test-model",
+            size="auto",
+        )
+        service = GenerationService(
+            [model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        captured: dict[str, Any] = {}
+
+        async def capture_text_to_image(prompt, count, target, output_dir, session):
+            captured["size"] = target.size
+            return [Path("generated.png")]
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=types.SimpleNamespace(
+                    text_to_image=capture_text_to_image,
+                    image_to_image=self.raise_backend_error,
+                ),
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            await service.generate(
+                mode="text_to_image",
+                prompt="做成两千乘两千的正方形",
+                size_override="2048x2048",
+            )
+
+        self.assertEqual(captured["size"], "2048x2048")
+
+    async def test_api_auto_size_keeps_auto_when_prompt_has_no_resolution(self) -> None:
+        model = ModelConfig(
+            provider="openai",
+            display_name="AutoSize",
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name="test-model",
+            size="auto",
+        )
+        service = GenerationService(
+            [model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        captured: dict[str, Any] = {}
+
+        async def capture_image_to_image(prompt, input_images, target, output_dir, session):
+            captured["size"] = target.size
+            return [Path("generated.png")]
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=types.SimpleNamespace(
+                    text_to_image=self.raise_backend_error,
+                    image_to_image=capture_image_to_image,
+                ),
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            await service.generate(
+                mode="image_to_image",
+                prompt="两位女主kiss，白色简约背景，闭眼",
+                input_images=["aaaa"],
+            )
+
+        self.assertEqual(captured["size"], "auto")
+
     async def return_generated_path(self, *args, **kwargs):
         return [Path("generated.png")]
 
@@ -695,6 +837,257 @@ class MessageParsingRegressionTests(unittest.TestCase):
         )
 
 
+class PromptResolutionParsingTests(unittest.TestCase):
+    def test_parse_common_resolution_spellings(self) -> None:
+        cases = {
+            "1024x1024分辨率。两位女主kiss": "1024x1024",
+            "把图改成 1024×768": "1024x768",
+            "分辨率：1280*720，电影感": "1280x720",
+            "size 1536 X 1024 cinematic": "1536x1024",
+            "宽1024高768，侧脸构图": "1024x768",
+            "高度 768 宽度 1024": "1024x768",
+            "width:1024 height:768 soft light": "1024x768",
+            "height=768, width=1024": "1024x768",
+            "尺寸为 512 x 512 简约背景": "512x512",
+            "1024分辨率 白色背景": "1024x1024",
+            "resolution: 2048": "2048x2048",
+            "两位女主kiss，白色简约背景": None,
+            "参考 10x10 网格布局": None,
+            "年份 1920 的海报": None,
+            "": None,
+        }
+        for prompt, expected in cases.items():
+            self.assertEqual(
+                parse_resolution_from_prompt(prompt),
+                expected,
+                msg=f"prompt={prompt!r}",
+            )
+
+    def test_normalize_resolution_value_from_llm_replies(self) -> None:
+        cases = {
+            "1024x1024": "1024x1024",
+            " 1280*720 ": "1280x720",
+            "`1536×1024`": "1536x1024",
+            "答案: 1024x768": "1024x768",
+            "none": None,
+            "无": None,
+            "没有": None,
+            "1024": "1024x1024",
+            "not a size": None,
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(
+                normalize_resolution_value(raw),
+                expected,
+                msg=f"raw={raw!r}",
+            )
+
+    def test_apply_prompt_resolution_only_when_size_is_auto(self) -> None:
+        auto_model = ModelConfig.from_template_entry(
+            {"provider": "openai", "display_name": "t", "size": "auto"}
+        )
+        fixed_model = ModelConfig.from_template_entry(
+            {"provider": "openai", "display_name": "t", "size": "1536x1024"}
+        )
+
+        resolved = apply_prompt_resolution_if_auto(
+            auto_model, "1024x1024分辨率。两位女主kiss"
+        )
+        self.assertEqual(resolved.size, "1024x1024")
+        self.assertIsNot(resolved, auto_model)
+
+        overridden = apply_prompt_resolution_if_auto(
+            auto_model,
+            "没有规则可匹配的口语尺寸",
+            size_override="2048x2048",
+        )
+        self.assertEqual(overridden.size, "2048x2048")
+
+        unchanged_auto = apply_prompt_resolution_if_auto(auto_model, "没有尺寸的提示词")
+        self.assertIs(unchanged_auto, auto_model)
+        self.assertEqual(unchanged_auto.size, "auto")
+
+        unchanged_fixed = apply_prompt_resolution_if_auto(
+            fixed_model, "1024x1024分辨率"
+        )
+        self.assertIs(unchanged_fixed, fixed_model)
+        self.assertEqual(unchanged_fixed.size, "1536x1024")
+
+
+class PromptResolutionLlmTests(unittest.IsolatedAsyncioTestCase):
+    def _build_plugin_for_size_llm(
+        self,
+        *,
+        mode: str = API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT,
+        llm_provider_id: str = "",
+        llm_generate: Any = None,
+        current_provider_id: str | None = "chat-provider",
+    ) -> ImageGatewayPlugin:
+        plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
+        plugin.api_size_auto_llm_config = ApiSizeAutoLlmConfig(
+            mode=mode,
+            llm_provider_id=llm_provider_id,
+        )
+        plugin.llm_prompt_expansion_config = LlmPromptExpansionConfig(enabled=False)
+
+        current_provider = None
+        if current_provider_id:
+            current_provider = types.SimpleNamespace(
+                meta=lambda: types.SimpleNamespace(id=current_provider_id)
+            )
+        plugin.context = types.SimpleNamespace(
+            llm_generate=llm_generate or AsyncMock(),
+            get_using_provider=lambda _umo: current_provider,
+            get_all_providers=lambda: [],
+        )
+        return plugin
+
+    async def test_resolve_size_uses_regex_before_llm(self) -> None:
+        plugin = self._build_plugin_for_size_llm()
+
+        size = await plugin._resolve_size_from_prompt(
+            FakeEvent("unused"),
+            "1024x1024分辨率。两位女主kiss",
+        )
+
+        self.assertEqual(size, "1024x1024")
+        plugin.context.llm_generate.assert_not_called()
+
+    async def test_resolve_size_skips_llm_when_mode_is_off(self) -> None:
+        plugin = self._build_plugin_for_size_llm(mode=API_SIZE_AUTO_LLM_MODE_OFF)
+
+        size = await plugin._resolve_size_from_prompt(
+            FakeEvent("unused"),
+            "做成两千乘两千的正方形高清图",
+        )
+
+        self.assertIsNone(size)
+        plugin.context.llm_generate.assert_not_called()
+
+    async def test_resolve_size_falls_back_to_follow_chat_llm(self) -> None:
+        plugin = self._build_plugin_for_size_llm(
+            mode=API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT,
+            llm_generate=AsyncMock(
+                return_value=types.SimpleNamespace(completion_text="2048x2048")
+            ),
+            current_provider_id="chat-provider",
+        )
+
+        size = await plugin._resolve_size_from_prompt(
+            FakeEvent("unused"),
+            "做成两千乘两千的正方形高清图",
+        )
+
+        self.assertEqual(size, "2048x2048")
+        plugin.context.llm_generate.assert_awaited_once()
+        self.assertEqual(
+            plugin.context.llm_generate.await_args.kwargs["chat_provider_id"],
+            "chat-provider",
+        )
+
+    async def test_resolve_size_uses_custom_provider_when_configured(self) -> None:
+        plugin = self._build_plugin_for_size_llm(
+            mode=API_SIZE_AUTO_LLM_MODE_CUSTOM,
+            llm_provider_id="custom-provider",
+            llm_generate=AsyncMock(
+                return_value=types.SimpleNamespace(completion_text="1280x720")
+            ),
+            current_provider_id="chat-provider",
+        )
+
+        size = await plugin._resolve_size_from_prompt(
+            FakeEvent("unused"),
+            "做成横版一千二八零乘七二零",
+        )
+
+        self.assertEqual(size, "1280x720")
+        self.assertEqual(
+            plugin.context.llm_generate.await_args.kwargs["chat_provider_id"],
+            "custom-provider",
+        )
+
+    async def test_resolve_size_custom_without_provider_skips_llm(self) -> None:
+        plugin = self._build_plugin_for_size_llm(
+            mode=API_SIZE_AUTO_LLM_MODE_CUSTOM,
+            llm_provider_id="",
+            current_provider_id="chat-provider",
+        )
+
+        size = await plugin._resolve_size_from_prompt(
+            FakeEvent("unused"),
+            "做成两千乘两千的正方形高清图",
+        )
+
+        self.assertIsNone(size)
+        plugin.context.llm_generate.assert_not_called()
+
+    async def test_resolve_size_returns_none_when_llm_says_none(self) -> None:
+        plugin = self._build_plugin_for_size_llm(
+            mode=API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT,
+            llm_generate=AsyncMock(
+                return_value=types.SimpleNamespace(completion_text="none")
+            ),
+        )
+
+        size = await plugin._resolve_size_from_prompt(
+            FakeEvent("unused"),
+            "两位女主kiss，白色简约背景",
+        )
+
+        self.assertIsNone(size)
+
+    async def test_run_generation_passes_size_override_from_original_prompt(self) -> None:
+        plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
+        plugin._refresh_services = lambda: None
+        plugin.api_size_auto_llm_config = ApiSizeAutoLlmConfig()
+        plugin.generation_service = types.SimpleNamespace(
+            _normalize_requested_count=lambda mode, count: max(1, count),
+            validate_request_count=lambda *args, **kwargs: None,
+            generate=AsyncMock(
+                return_value=(
+                    [Path("out.png")],
+                    "model",
+                    "direct_first",
+                    FakeForwardConfig(),
+                )
+            ),
+        )
+        plugin.global_send_strategy = "direct_first"
+        plugin._resolve_size_from_prompt = AsyncMock(return_value="1024x1024")
+        plugin._resolve_generation_prompt = AsyncMock(
+            return_value="expanded artistic prompt"
+        )
+        plugin._send_start_message = AsyncMock(
+            return_value=StartMessageDispatchResult(text="start", sent_passively=False)
+        )
+        plugin._retract_start_message = AsyncMock()
+        plugin._send_plain_text_directly = AsyncMock(return_value=True)
+
+        async def empty_send_images(*args, **kwargs):
+            if False:
+                yield None
+
+        plugin._send_generated_images = empty_send_images
+
+        event = FakeEvent("/改图 1024x1024分辨率")
+        results = [
+            result
+            async for result in plugin._run_generation(
+                event,
+                mode="image_to_image",
+                prompt="1024x1024分辨率。两位女主kiss",
+                input_images=["img"],
+                success_label="改图",
+            )
+        ]
+
+        self.assertEqual(results, [])
+        generate_kwargs = plugin.generation_service.generate.await_args.kwargs
+        self.assertEqual(generate_kwargs["size_override"], "1024x1024")
+        self.assertEqual(generate_kwargs["prompt"], "expanded artistic prompt")
+        plugin._resolve_size_from_prompt.assert_awaited_once()
+
+
 class TextToImageCommandRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_standard_command_reads_full_prompt_and_trailing_count_from_raw_message(self) -> None:
         plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
@@ -720,9 +1113,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.2", metadata)
-        self.assertIn('"2.1.2",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.2"))
+        self.assertIn("version: 2.1.3", metadata)
+        self.assertIn('"2.1.3",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.3"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -2171,6 +2564,56 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             expansion_items["custom_persona_prompt"]["default"],
             DEFAULT_LLM_PROMPT_EXPANSION_PERSONA,
         )
+
+    def test_conf_schema_places_api_size_auto_llm_between_models_and_workflow_bindings(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+        schema_keys = list(schema.keys())
+
+        self.assertLess(schema_keys.index("models"), schema_keys.index("api_size_auto_llm"))
+        self.assertLess(
+            schema_keys.index("api_size_auto_llm"),
+            schema_keys.index("workflow_node_bindings"),
+        )
+        # Still sits with the model-side settings before workflows / node bindings.
+        self.assertLess(schema_keys.index("api_size_auto_llm"), schema_keys.index("workflows"))
+
+        items = schema["api_size_auto_llm"]["items"]
+        self.assertEqual(schema["api_size_auto_llm"]["description"], "API auto模式LLM尺寸判定")
+        self.assertEqual(items["mode"]["default"], "follow_chat")
+        self.assertEqual(items["mode"]["options"], ["off", "follow_chat", "custom"])
+        self.assertEqual(
+            items["mode"]["labels"],
+            ["不使用LLM", "跟随当前聊天LLM", "自定义AstrBot已有LLM"],
+        )
+        self.assertEqual(items["llm_provider_id"]["_special"], "select_provider")
+        self.assertEqual(items["llm_provider_id"]["condition"], {"mode": "custom"})
+
+    def test_load_api_size_auto_llm_config_defaults_and_modes(self) -> None:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+
+        default_config = plugin_instance._load_api_size_auto_llm_config({})
+        self.assertEqual(default_config.mode, API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT)
+        self.assertEqual(default_config.llm_provider_id, "")
+
+        off_config = plugin_instance._load_api_size_auto_llm_config({"mode": "off"})
+        self.assertEqual(off_config.mode, API_SIZE_AUTO_LLM_MODE_OFF)
+        self.assertEqual(off_config.llm_provider_id, "")
+
+        custom_config = plugin_instance._load_api_size_auto_llm_config(
+            {"mode": "custom", "llm_provider_id": " provider-x "}
+        )
+        self.assertEqual(custom_config.mode, API_SIZE_AUTO_LLM_MODE_CUSTOM)
+        self.assertEqual(custom_config.llm_provider_id, "provider-x")
+
+        # Custom provider id is ignored unless mode is custom.
+        follow_with_id = plugin_instance._load_api_size_auto_llm_config(
+            {"mode": "follow_chat", "llm_provider_id": "should-ignore"}
+        )
+        self.assertEqual(follow_with_id.mode, API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT)
+        self.assertEqual(follow_with_id.llm_provider_id, "")
+
+        invalid_mode = plugin_instance._load_api_size_auto_llm_config({"mode": "weird"})
+        self.assertEqual(invalid_mode.mode, API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT)
 
     def test_workflow_runtime_default_timeout_matches_schema_default(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
