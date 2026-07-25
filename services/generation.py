@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal, Union
 
@@ -246,7 +247,7 @@ class GenerationService:
     ) -> list[Path]:
         if isinstance(target, WorkflowConfig):
             node_bindings = self._get_workflow_node_bindings(target.workflow_id)
-            runtime_config = target.resolve_runtime_config(self.workflow_runtime_default)
+            runtime_config = self._resolve_workflow_runtime_config(target)
             workflow_runner = (
                 self._a1111_runner
                 if target.workflow_engine == "a1111"
@@ -356,17 +357,9 @@ class GenerationService:
     def _resolve_configured_timeout_seconds(self, target: GenerationTarget) -> int | None:
         """Return configured timeout seconds, or None for unlimited.
 
-        Workflow targets use their runtime timeout_seconds. API models follow
-        either the global default or a per-entry custom value.
+        Both API models and workflows follow either the global default timeout
+        or a per-entry custom value (timeout_mode / timeout_seconds).
         """
-        if isinstance(target, WorkflowConfig):
-            seconds = target.resolve_runtime_config(
-                self.workflow_runtime_default
-            ).timeout_seconds
-            if seconds is None or int(seconds) < 0:
-                return None
-            return max(1, int(seconds))
-
         if getattr(target, "timeout_mode", "follow_global") == "custom":
             seconds = parse_int(getattr(target, "timeout_seconds", -1), -1)
         else:
@@ -375,6 +368,15 @@ class GenerationService:
         if seconds < 0:
             return None
         return max(1, seconds)
+
+    def _resolve_workflow_runtime_config(self, target: WorkflowConfig) -> WorkflowRuntimeConfig:
+        """Apply entry/global timeout onto the workflow runtime config used for polling."""
+        runtime_config = target.resolve_runtime_config(self.workflow_runtime_default)
+        configured = self._resolve_configured_timeout_seconds(target)
+        if configured is None:
+            # Practical "unlimited" for polling loops that require a numeric deadline.
+            return replace(runtime_config, timeout_seconds=365 * 24 * 3600)
+        return replace(runtime_config, timeout_seconds=configured)
 
     def _build_client_timeout(self, target: GenerationTarget) -> aiohttp.ClientTimeout:
         configured = self._resolve_configured_timeout_seconds(target)

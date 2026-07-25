@@ -1113,9 +1113,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.4", metadata)
-        self.assertIn('"2.1.4",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.4"))
+        self.assertIn("version: 2.1.5", metadata)
+        self.assertIn('"2.1.5",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.5"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -3952,6 +3952,7 @@ class ProviderFallbackSafetyRegressionTests(unittest.IsolatedAsyncioTestCase):
 
 class WorkflowTimeoutRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_generation_session_allows_configured_workflow_timeout(self) -> None:
+        # Workflows follow global timeout by default (not workflow_runtime_default).
         workflow = WorkflowConfig.from_template_entry(
             {"workflow_id": "slow-workflow", "workflow_content": "{}"}
         )
@@ -3960,9 +3961,10 @@ class WorkflowTimeoutRegressionTests(unittest.IsolatedAsyncioTestCase):
             [],
             global_retry_count=1,
             global_max_generation_count=-1,
+            global_timeout_seconds=300,
             output_dir=Path("."),
             counter=FakeCounter(),
-            workflow_runtime_default=WorkflowRuntimeConfig(timeout_seconds=300),
+            workflow_runtime_default=WorkflowRuntimeConfig(timeout_seconds=120),
         )
         captured_sessions: list[FakeClientSession] = []
 
@@ -3980,7 +3982,45 @@ class WorkflowTimeoutRegressionTests(unittest.IsolatedAsyncioTestCase):
         ):
             await service.generate(mode="text_to_image", prompt="test")
 
+        # follow_global 300s + 30s session buffer
         self.assertEqual(captured_sessions[0].kwargs["timeout"].total, 330)
+
+    async def test_workflow_custom_timeout_overrides_global(self) -> None:
+        workflow = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "custom-timeout-workflow",
+                "workflow_content": "{}",
+                "timeout_mode": "custom",
+                "timeout_seconds": 90,
+            }
+        )
+        service = GenerationService(
+            [workflow],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            global_timeout_seconds=180,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        self.assertEqual(service._resolve_configured_timeout_seconds(workflow), 90)
+        self.assertEqual(service._build_client_timeout(workflow).total, 120)
+        runtime = service._resolve_workflow_runtime_config(workflow)
+        self.assertEqual(runtime.timeout_seconds, 90)
+
+    def test_workflow_config_reads_timeout_fields(self) -> None:
+        workflow = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "wf",
+                "timeout_mode": "custom",
+                "timeout_seconds": 60,
+            }
+        )
+        self.assertEqual(workflow.timeout_mode, "custom")
+        self.assertEqual(workflow.timeout_seconds, 60)
+        default_workflow = WorkflowConfig.from_template_entry({"workflow_id": "wf2"})
+        self.assertEqual(default_workflow.timeout_mode, "follow_global")
+        self.assertEqual(default_workflow.timeout_seconds, -1)
 
     async def test_api_model_uses_global_timeout_by_default(self) -> None:
         model = ModelConfig(
@@ -4167,11 +4207,7 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
 
     def test_schema_places_empty_dedicated_command_before_fake_forward(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
-        templates = {
-            **schema["models"]["templates"],
-            **schema["workflows"]["templates"],
-        }
-        for template_name, template in templates.items():
+        for template_name, template in schema["models"]["templates"].items():
             with self.subTest(template=template_name):
                 items = template["items"]
                 keys = list(items)
@@ -4180,6 +4216,22 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
                 self.assertEqual(items["dedicated_command"]["default"], "")
                 self.assertEqual(
                     keys.index("dedicated_command") + 1,
+                    keys.index("fake_forward_mode"),
+                )
+
+        for template_name, template in schema["workflows"]["templates"].items():
+            with self.subTest(workflow_template=template_name):
+                items = template["items"]
+                keys = list(items)
+                self.assertIn("dedicated_command", items)
+                self.assertEqual(items["dedicated_command"]["default"], "")
+                # Workflows place timeout + retry/count between dedicated and fake_forward.
+                self.assertEqual(
+                    keys.index("dedicated_command") + 1,
+                    keys.index("timeout_mode"),
+                )
+                self.assertEqual(
+                    keys.index("max_generation_count") + 1,
                     keys.index("fake_forward_mode"),
                 )
 
@@ -4231,6 +4283,44 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
                 self.assertEqual(
                     keys.index("max_generation_count") + 1,
                     keys.index("dedicated_command"),
+                )
+
+    def test_workflow_schema_timeout_and_retry_order(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+        for template_name, template in schema["workflows"]["templates"].items():
+            with self.subTest(template=template_name):
+                items = template["items"]
+                keys = list(items)
+                self.assertIn("timeout_mode", items)
+                self.assertIn("timeout_seconds", items)
+                self.assertEqual(items["timeout_mode"]["default"], "follow_global")
+                self.assertEqual(
+                    items["timeout_mode"]["options"],
+                    ["follow_global", "custom"],
+                )
+                self.assertEqual(
+                    items["timeout_seconds"]["condition"],
+                    {"timeout_mode": "custom"},
+                )
+                self.assertEqual(
+                    keys.index("dedicated_command") + 1,
+                    keys.index("timeout_mode"),
+                )
+                self.assertEqual(
+                    keys.index("timeout_mode") + 1,
+                    keys.index("timeout_seconds"),
+                )
+                self.assertEqual(
+                    keys.index("timeout_seconds") + 1,
+                    keys.index("retry_count"),
+                )
+                self.assertEqual(
+                    keys.index("retry_count") + 1,
+                    keys.index("max_generation_count"),
+                )
+                self.assertEqual(
+                    keys.index("max_generation_count") + 1,
+                    keys.index("fake_forward_mode"),
                 )
 
 

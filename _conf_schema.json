@@ -8,7 +8,7 @@
   },
   "global_timeout_seconds": {
     "description": "全局默认超时时间",
-    "hint": "单位秒。图像生成模型 API 请求的默认超时；-1 表示不限制。条目可选择跟随全局或自定义。",
+    "hint": "单位秒。图像生成模型与工作流在「跟随全局」时使用的默认超时；-1 表示不限制。条目可各自选择跟随全局或自定义。",
     "type": "int",
     "default": 180,
     "obvious_hint": true
@@ -1636,18 +1636,6 @@
               "priority_preset": "custom"
             }
           },
-          "retry_count": {
-            "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认仅文生图；如果该 workflow 按单工作流双入口设计，可选择“文生图 + 改图”；如果它只用于改图，也可以选择“仅改图”",
@@ -1687,6 +1675,41 @@
             "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
             "type": "string",
             "default": ""
+          },
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
@@ -1788,18 +1811,6 @@
               "priority_preset": "custom"
             }
           },
-          "retry_count": {
-            "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "A1111 支持 txt2img 与 img2img；双模式工作流可通过 mode_switch_* 绑定切换 denoise 等参数",
@@ -1839,6 +1850,41 @@
             "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
             "type": "string",
             "default": ""
+          },
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
@@ -2092,7 +2138,8 @@
       "timeout_seconds": {
         "description": "任务超时时间（秒）",
         "type": "int",
-        "default": 300
+        "default": 300,
+        "hint": "兼容旧配置的工作流轮询超时兜底；实际任务超时请使用「全局默认超时时间」与工作流条目中的「超时时间」配置（跟随全局 / 自定义）"
       }
     }
   },

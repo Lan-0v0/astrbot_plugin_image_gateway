@@ -147,6 +147,8 @@ class WorkflowConfig:
     max_generation_count: int = -1
     send_strategy: str = "follow_global"
     dedicated_command: str = ""
+    timeout_mode: str = "follow_global"
+    timeout_seconds: int = -1
     fake_forward_mode: str = "follow_global"
     fake_forward_custom_qq: str = ""
     runtime_base_url_override: str = ""
@@ -170,6 +172,9 @@ class WorkflowConfig:
             or entry.get("workflow_engine")
             or entry.get("workflow_type")
         )
+        timeout_mode = str(entry.get("timeout_mode") or "follow_global").strip().lower()
+        if timeout_mode not in {"follow_global", "custom"}:
+            timeout_mode = "follow_global"
 
         return cls(
             workflow_id=workflow_id,
@@ -181,6 +186,8 @@ class WorkflowConfig:
             max_generation_count=parse_int(entry.get("max_generation_count"), -1),
             send_strategy=parse_entry_send_strategy(entry.get("send_strategy")),
             dedicated_command=normalize_dedicated_command(entry.get("dedicated_command")),
+            timeout_mode=timeout_mode,
+            timeout_seconds=parse_int(entry.get("timeout_seconds"), -1),
             fake_forward_mode=parse_entry_fake_forward_mode(entry.get("fake_forward_mode")),
             fake_forward_custom_qq=normalize_custom_qq(entry.get("fake_forward_custom_qq")),
             runtime_base_url_override=str(entry.get("runtime_base_url_override") or "").strip(),
