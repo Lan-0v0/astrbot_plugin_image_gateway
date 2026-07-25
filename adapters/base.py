@@ -169,7 +169,9 @@ class ModelConfig:
     timeout_seconds: int = -1
     priority: int = 0
     enabled: bool = True
+    retry_mode: str = "follow_global"
     retry_count: int = -1
+    max_generation_mode: str = "follow_global"
     max_generation_count: int = -1
     send_strategy: str = "follow_global"
     dedicated_command: str = ""
@@ -197,6 +199,14 @@ class ModelConfig:
         timeout_mode = str(entry.get("timeout_mode") or "follow_global").strip().lower()
         if timeout_mode not in {"follow_global", "custom"}:
             timeout_mode = "follow_global"
+        retry_mode = str(entry.get("retry_mode") or "follow_global").strip().lower()
+        if retry_mode not in {"follow_global", "custom"}:
+            retry_mode = "follow_global"
+        max_generation_mode = str(
+            entry.get("max_generation_mode") or "follow_global"
+        ).strip().lower()
+        if max_generation_mode not in {"follow_global", "custom"}:
+            max_generation_mode = "follow_global"
         return cls(
             provider=template,
             display_name=str(entry.get("display_name") or template or "未命名模型"),
@@ -217,7 +227,9 @@ class ModelConfig:
             timeout_seconds=parse_int(entry.get("timeout_seconds"), -1),
             priority=resolve_priority_value(entry, default_priority=10),
             enabled=parse_bool(entry.get("enabled"), True),
+            retry_mode=retry_mode,
             retry_count=parse_int(entry.get("retry_count"), -1),
+            max_generation_mode=max_generation_mode,
             max_generation_count=parse_int(entry.get("max_generation_count"), -1),
             send_strategy=parse_entry_send_strategy(entry.get("send_strategy")),
             dedicated_command=normalize_dedicated_command(entry.get("dedicated_command")),

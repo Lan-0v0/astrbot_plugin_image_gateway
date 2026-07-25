@@ -1113,9 +1113,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.5", metadata)
-        self.assertIn('"2.1.5",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.5"))
+        self.assertIn("version: 2.1.6", metadata)
+        self.assertIn('"2.1.6",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.6"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -1166,7 +1166,7 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         generation_service = GenerationService.from_config({}, Path("."), FakeCounter())
         self.assertEqual(generation_service.global_retry_count, 2)
         self.assertEqual(generation_service.global_max_generation_count, 2)
-        self.assertEqual(generation_service.global_timeout_seconds, 180)
+        self.assertEqual(generation_service.global_timeout_seconds, -1)
         self.assertEqual(generation_service.global_send_strategy, SendStrategy.DIRECT_FIRST)
         self.assertEqual(generation_service.global_fake_forward.mode, FakeForwardMode.OFF.value)
         self.assertEqual(generation_service.global_fake_forward.custom_qq, "")
@@ -4152,6 +4152,68 @@ class WorkflowTimeoutRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(default_model.timeout_mode, "follow_global")
         self.assertEqual(default_model.timeout_seconds, -1)
 
+    def test_resolve_retry_and_max_generation_follow_or_custom(self) -> None:
+        service = GenerationService(
+            [],
+            [],
+            global_retry_count=3,
+            global_max_generation_count=4,
+            global_timeout_seconds=-1,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        follow_model = ModelConfig.from_template_entry(
+            {
+                "provider": "openai",
+                "retry_mode": "follow_global",
+                "retry_count": 9,
+                "max_generation_mode": "follow_global",
+                "max_generation_count": 1,
+            }
+        )
+        self.assertEqual(service._resolve_retry_count(follow_model), 3)
+        self.assertEqual(service._resolve_max_count(follow_model), 4)
+
+        custom_model = ModelConfig.from_template_entry(
+            {
+                "provider": "openai",
+                "retry_mode": "custom",
+                "retry_count": 5,
+                "max_generation_mode": "custom",
+                "max_generation_count": 1,
+            }
+        )
+        self.assertEqual(service._resolve_retry_count(custom_model), 5)
+        self.assertEqual(service._resolve_max_count(custom_model), 1)
+
+        unlimited_model = ModelConfig.from_template_entry(
+            {
+                "provider": "openai",
+                "max_generation_mode": "custom",
+                "max_generation_count": -1,
+            }
+        )
+        self.assertEqual(service._resolve_max_count(unlimited_model), -1)
+
+        # Legacy entries without mode fields still honor positive overrides.
+        legacy_model = ModelConfig.from_template_entry(
+            {"provider": "openai", "retry_count": 7, "max_generation_count": 2}
+        )
+        self.assertEqual(service._resolve_retry_count(legacy_model), 7)
+        self.assertEqual(service._resolve_max_count(legacy_model), 2)
+
+        workflow = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "wf",
+                "retry_mode": "custom",
+                "retry_count": 6,
+                "max_generation_mode": "custom",
+                "max_generation_count": 3,
+            }
+        )
+        self.assertEqual(service._resolve_retry_count(workflow), 6)
+        self.assertEqual(service._resolve_max_count(workflow), 3)
+
 
 class ComfyUIFailureStatusRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_history_error_is_reported_without_waiting_for_timeout(self) -> None:
@@ -4246,7 +4308,7 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
             schema_keys.index("global_timeout_seconds"),
             schema_keys.index("global_retry_count"),
         )
-        self.assertEqual(schema["global_timeout_seconds"]["default"], 180)
+        self.assertEqual(schema["global_timeout_seconds"]["default"], -1)
         self.assertEqual(schema["global_timeout_seconds"]["description"], "全局默认超时时间")
 
         for template_name, template in schema["models"]["templates"].items():
@@ -4274,15 +4336,30 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
                         keys.index("moderation") + 1,
                         keys.index("timeout_mode"),
                     )
-                self.assertLess(keys.index("timeout_mode"), keys.index("retry_count"))
-                self.assertLess(keys.index("retry_count"), keys.index("max_generation_count"))
-                self.assertLess(
-                    keys.index("max_generation_count"),
-                    keys.index("dedicated_command"),
+                self.assertEqual(items["retry_mode"]["default"], "follow_global")
+                self.assertEqual(
+                    items["retry_mode"]["labels"],
+                    ["跟随全局", "自定义重试次数"],
+                )
+                self.assertEqual(items["retry_count"]["condition"], {"retry_mode": "custom"})
+                self.assertEqual(items["max_generation_mode"]["default"], "follow_global")
+                self.assertEqual(
+                    items["max_generation_mode"]["labels"],
+                    ["跟随全局", "自定义单次请求最大生成张数"],
+                )
+                self.assertEqual(
+                    items["max_generation_count"]["condition"],
+                    {"max_generation_mode": "custom"},
                 )
                 self.assertEqual(
                     keys.index("max_generation_count") + 1,
                     keys.index("dedicated_command"),
+                )
+                self.assertLess(keys.index("retry_mode"), keys.index("retry_count"))
+                self.assertLess(keys.index("retry_count"), keys.index("max_generation_mode"))
+                self.assertLess(
+                    keys.index("max_generation_mode"),
+                    keys.index("max_generation_count"),
                 )
 
     def test_workflow_schema_timeout_and_retry_order(self) -> None:
@@ -4310,12 +4387,30 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
                     keys.index("timeout_mode") + 1,
                     keys.index("timeout_seconds"),
                 )
+                self.assertEqual(items["retry_mode"]["default"], "follow_global")
+                self.assertEqual(items["retry_count"]["condition"], {"retry_mode": "custom"})
+                self.assertEqual(
+                    items["max_generation_mode"]["default"],
+                    "follow_global",
+                )
+                self.assertEqual(
+                    items["max_generation_count"]["condition"],
+                    {"max_generation_mode": "custom"},
+                )
                 self.assertEqual(
                     keys.index("timeout_seconds") + 1,
+                    keys.index("retry_mode"),
+                )
+                self.assertEqual(
+                    keys.index("retry_mode") + 1,
                     keys.index("retry_count"),
                 )
                 self.assertEqual(
                     keys.index("retry_count") + 1,
+                    keys.index("max_generation_mode"),
+                )
+                self.assertEqual(
+                    keys.index("max_generation_mode") + 1,
                     keys.index("max_generation_count"),
                 )
                 self.assertEqual(

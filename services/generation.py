@@ -39,7 +39,7 @@ class GenerationService:
         *,
         global_retry_count: int,
         global_max_generation_count: int,
-        global_timeout_seconds: int = 180,
+        global_timeout_seconds: int = -1,
         output_dir: Path,
         counter: GenerationCounter,
         global_send_strategy: SendStrategy = DEFAULT_GLOBAL_SEND_STRATEGY,
@@ -50,8 +50,8 @@ class GenerationService:
         self.workflow_node_bindings = workflow_node_bindings
         self.global_retry_count = max(1, global_retry_count)
         self.global_max_generation_count = global_max_generation_count
-        # -1 means unlimited for API models following global timeout.
-        self.global_timeout_seconds = parse_int(global_timeout_seconds, 180)
+        # -1 means unlimited when entries follow the global timeout.
+        self.global_timeout_seconds = parse_int(global_timeout_seconds, -1)
         self.output_dir = output_dir
         self.counter = counter
         self.global_send_strategy = global_send_strategy
@@ -92,7 +92,7 @@ class GenerationService:
             global_max_generation_count=parse_int(
                 config.get("global_max_generation_count"), 2
             ) or 2,
-            global_timeout_seconds=parse_int(config.get("global_timeout_seconds"), 180),
+            global_timeout_seconds=parse_int(config.get("global_timeout_seconds"), -1),
             output_dir=output_dir,
             counter=counter,
             global_send_strategy=parse_global_send_strategy(config.get("send_strategy")),
@@ -345,13 +345,33 @@ class GenerationService:
         return limit >= 0 and requested_count > limit
 
     def _resolve_retry_count(self, target: GenerationTarget) -> int:
-        if target.retry_count and target.retry_count > 0:
-            return target.retry_count
+        raw = getattr(target, "raw", {}) or {}
+        # Legacy configs only had retry_count (-1 = follow global).
+        if "retry_mode" not in raw:
+            if target.retry_count and target.retry_count > 0:
+                return target.retry_count
+            return self.global_retry_count
+
+        if getattr(target, "retry_mode", "follow_global") == "custom":
+            custom_retry = parse_int(getattr(target, "retry_count", -1), -1)
+            if custom_retry > 0:
+                return custom_retry
+            return self.global_retry_count
         return self.global_retry_count
 
     def _resolve_max_count(self, target: GenerationTarget) -> int:
-        if target.max_generation_count is not None and target.max_generation_count >= 0:
-            return target.max_generation_count
+        raw = getattr(target, "raw", {}) or {}
+        # Legacy configs only had max_generation_count (-1 = follow global).
+        if "max_generation_mode" not in raw:
+            if (
+                target.max_generation_count is not None
+                and target.max_generation_count >= 0
+            ):
+                return target.max_generation_count
+            return self.global_max_generation_count
+
+        if getattr(target, "max_generation_mode", "follow_global") == "custom":
+            return parse_int(getattr(target, "max_generation_count", -1), -1)
         return self.global_max_generation_count
 
     def _resolve_configured_timeout_seconds(self, target: GenerationTarget) -> int | None:
@@ -363,7 +383,7 @@ class GenerationService:
         if getattr(target, "timeout_mode", "follow_global") == "custom":
             seconds = parse_int(getattr(target, "timeout_seconds", -1), -1)
         else:
-            seconds = parse_int(self.global_timeout_seconds, 180)
+            seconds = parse_int(self.global_timeout_seconds, -1)
 
         if seconds < 0:
             return None

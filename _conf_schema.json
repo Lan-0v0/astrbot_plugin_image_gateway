@@ -10,7 +10,7 @@
     "description": "全局默认超时时间",
     "hint": "单位秒。图像生成模型与工作流在「跟随全局」时使用的默认超时；-1 表示不限制。条目可各自选择跟随全局或自定义。",
     "type": "int",
-    "default": 180,
+    "default": -1,
     "obvious_hint": true
   },
   "global_retry_count": {
@@ -182,17 +182,51 @@
               "timeout_mode": "custom"
             }
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
+            "hint": "正整数；该条目单独使用的重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
+            "description": "自定义单次请求最大生成张数",
+            "hint": "-1 表示不限制；正整数为上限",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -406,17 +440,51 @@
               "timeout_mode": "custom"
             }
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
+            "hint": "正整数；该条目单独使用的重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
+            "description": "自定义单次请求最大生成张数",
+            "hint": "-1 表示不限制；正整数为上限",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -655,17 +723,51 @@
             "type": "string",
             "default": "0.8"
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
+            "hint": "正整数；该条目单独使用的重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
+            "description": "自定义单次请求最大生成张数",
+            "hint": "-1 表示不限制；正整数为上限",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -865,15 +967,51 @@
               "timeout_mode": "custom"
             }
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "hint": "正整数；该条目单独使用的重试次数",
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
+            "description": "自定义单次请求最大生成张数",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "hint": "-1 表示不限制；正整数为上限",
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -1084,15 +1222,51 @@
               "timeout_mode": "custom"
             }
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "hint": "正整数；该条目单独使用的重试次数",
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
+            "description": "自定义单次请求最大生成张数",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "hint": "-1 表示不限制；正整数为上限",
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -1278,15 +1452,51 @@
               "timeout_mode": "custom"
             }
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "hint": "正整数；该条目单独使用的重试次数",
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
+            "description": "自定义单次请求最大生成张数",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "hint": "-1 表示不限制；正整数为上限",
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -1481,15 +1691,51 @@
               "timeout_mode": "custom"
             }
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "hint": "正整数；该条目单独使用的重试次数",
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
+            "description": "自定义单次请求最大生成张数",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "hint": "-1 表示不限制；正整数为上限",
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -1699,17 +1945,51 @@
               "timeout_mode": "custom"
             }
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
+            "hint": "正整数；该条目单独使用的重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
+            "description": "自定义单次请求最大生成张数",
+            "hint": "-1 表示不限制；正整数为上限",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
@@ -1874,17 +2154,51 @@
               "timeout_mode": "custom"
             }
           },
-          "retry_count": {
+          "retry_mode": {
             "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
+            "hint": "跟随全局使用上方「全局默认重试次数」；自定义后可单独设置重试次数",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义重试次数"
+            ]
+          },
+          "retry_count": {
+            "description": "自定义重试次数",
+            "hint": "正整数；该条目单独使用的重试次数",
             "type": "int",
-            "default": -1
+            "default": 2,
+            "condition": {
+              "retry_mode": "custom"
+            }
+          },
+          "max_generation_mode": {
+            "description": "单次请求最大生成张数",
+            "hint": "跟随全局使用上方「全局默认单次请求最大生成张数上限」；自定义后可单独设置，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义单次请求最大生成张数"
+            ]
           },
           "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
+            "description": "自定义单次请求最大生成张数",
+            "hint": "-1 表示不限制；正整数为上限",
             "type": "int",
-            "default": -1
+            "default": -1,
+            "condition": {
+              "max_generation_mode": "custom"
+            }
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
