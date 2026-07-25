@@ -165,6 +165,8 @@ class ModelConfig:
     moderation: str = "auto"
     supported_modes: list[str] = field(default_factory=lambda: ["text_to_image", "image_to_image"])
     seed: str = ""
+    timeout_mode: str = "follow_global"
+    timeout_seconds: int = -1
     priority: int = 0
     enabled: bool = True
     retry_count: int = -1
@@ -192,6 +194,9 @@ class ModelConfig:
             or entry.get("provider")
             or ""
         ).lower()
+        timeout_mode = str(entry.get("timeout_mode") or "follow_global").strip().lower()
+        if timeout_mode not in {"follow_global", "custom"}:
+            timeout_mode = "follow_global"
         return cls(
             provider=template,
             display_name=str(entry.get("display_name") or template or "未命名模型"),
@@ -205,7 +210,11 @@ class ModelConfig:
                 entry.get("supported_modes"),
                 default_modes=["text_to_image", "image_to_image"],
             ),
+            # Seed remains supported for legacy configs / adapters, but is no longer
+            # exposed in the dashboard model templates.
             seed=str(entry.get("seed") or "").strip(),
+            timeout_mode=timeout_mode,
+            timeout_seconds=parse_int(entry.get("timeout_seconds"), -1),
             priority=resolve_priority_value(entry, default_priority=10),
             enabled=parse_bool(entry.get("enabled"), True),
             retry_count=parse_int(entry.get("retry_count"), -1),

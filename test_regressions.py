@@ -1113,9 +1113,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.3", metadata)
-        self.assertIn('"2.1.3",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.3"))
+        self.assertIn("version: 2.1.4", metadata)
+        self.assertIn('"2.1.4",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.4"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -1166,6 +1166,7 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         generation_service = GenerationService.from_config({}, Path("."), FakeCounter())
         self.assertEqual(generation_service.global_retry_count, 2)
         self.assertEqual(generation_service.global_max_generation_count, 2)
+        self.assertEqual(generation_service.global_timeout_seconds, 180)
         self.assertEqual(generation_service.global_send_strategy, SendStrategy.DIRECT_FIRST)
         self.assertEqual(generation_service.global_fake_forward.mode, FakeForwardMode.OFF.value)
         self.assertEqual(generation_service.global_fake_forward.custom_qq, "")
@@ -3981,6 +3982,136 @@ class WorkflowTimeoutRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(captured_sessions[0].kwargs["timeout"].total, 330)
 
+    async def test_api_model_uses_global_timeout_by_default(self) -> None:
+        model = ModelConfig(
+            provider="openai",
+            display_name="API",
+            url="https://example.com/v1",
+            apikey="k",
+            model_name="m",
+            timeout_mode="follow_global",
+        )
+        service = GenerationService(
+            [model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            global_timeout_seconds=180,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        captured_sessions: list[FakeClientSession] = []
+
+        class CapturingSession(FakeClientSession):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                captured_sessions.append(self)
+
+        with (
+            patch.object(service, "_invoke_target", AsyncMock(return_value=[Path("image.png")])),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                CapturingSession,
+            ),
+        ):
+            await service.generate(mode="text_to_image", prompt="test")
+
+        self.assertEqual(captured_sessions[0].kwargs["timeout"].total, 180)
+
+    async def test_api_model_custom_timeout_and_unlimited(self) -> None:
+        custom_model = ModelConfig.from_template_entry(
+            {
+                "provider": "openai",
+                "display_name": "Custom",
+                "timeout_mode": "custom",
+                "timeout_seconds": 45,
+            }
+        )
+        unlimited_model = ModelConfig.from_template_entry(
+            {
+                "provider": "openai",
+                "display_name": "Unlimited",
+                "timeout_mode": "custom",
+                "timeout_seconds": -1,
+            }
+        )
+        service = GenerationService(
+            [custom_model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            global_timeout_seconds=180,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        self.assertEqual(service._resolve_configured_timeout_seconds(custom_model), 45)
+        self.assertIsNone(service._resolve_configured_timeout_seconds(unlimited_model))
+        self.assertEqual(service._build_client_timeout(custom_model).total, 45)
+        self.assertIsNone(service._build_client_timeout(unlimited_model).total)
+
+        follow_service = GenerationService(
+            [unlimited_model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            global_timeout_seconds=-1,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+        follow_model = ModelConfig.from_template_entry(
+            {"provider": "openai", "timeout_mode": "follow_global"}
+        )
+        self.assertIsNone(follow_service._resolve_configured_timeout_seconds(follow_model))
+        self.assertIsNone(follow_service._build_client_timeout(follow_model).total)
+
+    async def test_timeout_error_reports_readable_message(self) -> None:
+        model = ModelConfig(
+            provider="openai",
+            display_name="Gitee AI改图",
+            url="https://example.com/v1",
+            apikey="k",
+            model_name="m",
+            timeout_mode="follow_global",
+        )
+        service = GenerationService(
+            [model],
+            [],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            global_timeout_seconds=180,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+
+        async def raise_timeout(*args, **kwargs):
+            raise TimeoutError()
+
+        with (
+            patch.object(service, "_invoke_target_until_count", raise_timeout),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            with self.assertRaises(GenerationError) as raised:
+                await service.generate(mode="image_to_image", prompt="x", input_images=["aa"])
+
+        self.assertEqual(str(raised.exception), "Gitee AI改图: 请求超时（180s）")
+
+    def test_model_config_reads_timeout_fields(self) -> None:
+        model = ModelConfig.from_template_entry(
+            {
+                "provider": "openai",
+                "timeout_mode": "custom",
+                "timeout_seconds": 90,
+            }
+        )
+        self.assertEqual(model.timeout_mode, "custom")
+        self.assertEqual(model.timeout_seconds, 90)
+        default_model = ModelConfig.from_template_entry({"provider": "openai"})
+        self.assertEqual(default_model.timeout_mode, "follow_global")
+        self.assertEqual(default_model.timeout_seconds, -1)
+
 
 class ComfyUIFailureStatusRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_history_error_is_reported_without_waiting_for_timeout(self) -> None:
@@ -4050,6 +4181,56 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
                 self.assertEqual(
                     keys.index("dedicated_command") + 1,
                     keys.index("fake_forward_mode"),
+                )
+
+    def test_model_schema_timeout_retry_order_and_seed_removed(self) -> None:
+        schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
+        schema_keys = list(schema.keys())
+        self.assertLess(
+            schema_keys.index("enable_nl_trigger"),
+            schema_keys.index("global_timeout_seconds"),
+        )
+        self.assertLess(
+            schema_keys.index("global_timeout_seconds"),
+            schema_keys.index("global_retry_count"),
+        )
+        self.assertEqual(schema["global_timeout_seconds"]["default"], 180)
+        self.assertEqual(schema["global_timeout_seconds"]["description"], "全局默认超时时间")
+
+        for template_name, template in schema["models"]["templates"].items():
+            with self.subTest(template=template_name):
+                items = template["items"]
+                keys = list(items)
+                self.assertNotIn("seed", items)
+                self.assertIn("timeout_mode", items)
+                self.assertIn("timeout_seconds", items)
+                self.assertEqual(items["timeout_mode"]["default"], "follow_global")
+                self.assertEqual(
+                    items["timeout_mode"]["options"],
+                    ["follow_global", "custom"],
+                )
+                self.assertEqual(
+                    items["timeout_mode"]["labels"],
+                    ["跟随全局", "自定义超时时间"],
+                )
+                self.assertEqual(
+                    items["timeout_seconds"]["condition"],
+                    {"timeout_mode": "custom"},
+                )
+                if "moderation" in items:
+                    self.assertEqual(
+                        keys.index("moderation") + 1,
+                        keys.index("timeout_mode"),
+                    )
+                self.assertLess(keys.index("timeout_mode"), keys.index("retry_count"))
+                self.assertLess(keys.index("retry_count"), keys.index("max_generation_count"))
+                self.assertLess(
+                    keys.index("max_generation_count"),
+                    keys.index("dedicated_command"),
+                )
+                self.assertEqual(
+                    keys.index("max_generation_count") + 1,
+                    keys.index("dedicated_command"),
                 )
 
 

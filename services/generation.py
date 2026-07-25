@@ -38,6 +38,7 @@ class GenerationService:
         *,
         global_retry_count: int,
         global_max_generation_count: int,
+        global_timeout_seconds: int = 180,
         output_dir: Path,
         counter: GenerationCounter,
         global_send_strategy: SendStrategy = DEFAULT_GLOBAL_SEND_STRATEGY,
@@ -48,6 +49,8 @@ class GenerationService:
         self.workflow_node_bindings = workflow_node_bindings
         self.global_retry_count = max(1, global_retry_count)
         self.global_max_generation_count = global_max_generation_count
+        # -1 means unlimited for API models following global timeout.
+        self.global_timeout_seconds = parse_int(global_timeout_seconds, 180)
         self.output_dir = output_dir
         self.counter = counter
         self.global_send_strategy = global_send_strategy
@@ -88,6 +91,7 @@ class GenerationService:
             global_max_generation_count=parse_int(
                 config.get("global_max_generation_count"), 2
             ) or 2,
+            global_timeout_seconds=parse_int(config.get("global_timeout_seconds"), 180),
             output_dir=output_dir,
             counter=counter,
             global_send_strategy=parse_global_send_strategy(config.get("send_strategy")),
@@ -115,38 +119,30 @@ class GenerationService:
         had_sensitive = False
         quota_exhausted_target_count = 0
         mode_unsupported_target_count = 0
-        workflow_timeout = max(
-            (
-                target.resolve_runtime_config(self.workflow_runtime_default).timeout_seconds
-                for target in targets
-                if isinstance(target, WorkflowConfig)
-            ),
-            default=0,
-        )
-        timeout = aiohttp.ClientTimeout(total=max(180, workflow_timeout + 30))
 
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            for target in targets:
-                if not target.supports_mode(mode):
-                    mode_unsupported_target_count += 1
-                    continue
+        for target in targets:
+            if not target.supports_mode(mode):
+                mode_unsupported_target_count += 1
+                continue
 
-                if self._request_count_exceeds_limit(target, requested_count):
-                    quota_exhausted_target_count += 1
-                    execution_errors.append(f"{target.display_name}: 超出生成张数上限")
-                    continue
+            if self._request_count_exceeds_limit(target, requested_count):
+                quota_exhausted_target_count += 1
+                execution_errors.append(f"{target.display_name}: 超出生成张数上限")
+                continue
 
-                retry_count = self._resolve_retry_count(target)
+            retry_count = self._resolve_retry_count(target)
+            client_timeout = self._build_client_timeout(target)
 
-                for attempt in range(retry_count):
-                    try:
-                        if attempt > 0:
-                            delay = min(2**attempt, 10)
-                            logger.info(
-                                f"[{target.display_name}] 第 {attempt + 1}/{retry_count} 次重试，等待 {delay}s"
-                            )
-                            await asyncio.sleep(delay)
+            for attempt in range(retry_count):
+                try:
+                    if attempt > 0:
+                        delay = min(2**attempt, 10)
+                        logger.info(
+                            f"[{target.display_name}] 第 {attempt + 1}/{retry_count} 次重试，等待 {delay}s"
+                        )
+                        await asyncio.sleep(delay)
 
+                    async with aiohttp.ClientSession(timeout=client_timeout) as session:
                         paths = await self._invoke_target_until_count(
                             target,
                             mode=mode,
@@ -157,34 +153,41 @@ class GenerationService:
                             size_override=size_override,
                         )
 
-                        if paths:
-                            await self.counter.add_count(target.model_key(), len(paths))
-                            effective_send_strategy = resolve_effective_send_strategy(
-                                global_strategy=self.global_send_strategy,
-                                entry_strategy=target.send_strategy,
-                            )
-                            effective_fake_forward = resolve_effective_fake_forward(
-                                global_config=self.global_fake_forward,
-                                entry_mode=target.fake_forward_mode,
-                                entry_custom_qq=target.fake_forward_custom_qq,
-                            )
-                            return paths, target.display_name, effective_send_strategy, effective_fake_forward
-                    except SensitiveContentError as exc:
-                        had_sensitive = True
-                        msg = f"{target.display_name}: {exc}"
-                        logger.warning(msg)
+                    if paths:
+                        await self.counter.add_count(target.model_key(), len(paths))
+                        effective_send_strategy = resolve_effective_send_strategy(
+                            global_strategy=self.global_send_strategy,
+                            entry_strategy=target.send_strategy,
+                        )
+                        effective_fake_forward = resolve_effective_fake_forward(
+                            global_config=self.global_fake_forward,
+                            entry_mode=target.fake_forward_mode,
+                            entry_custom_qq=target.fake_forward_custom_qq,
+                        )
+                        return paths, target.display_name, effective_send_strategy, effective_fake_forward
+                except SensitiveContentError as exc:
+                    had_sensitive = True
+                    msg = f"{target.display_name}: {exc}"
+                    logger.warning(msg)
+                    execution_errors.append(msg)
+                    break
+                except GenerationError as exc:
+                    msg = f"{target.display_name}: {exc}"
+                    logger.warning(msg)
+                    if attempt == retry_count - 1:
                         execution_errors.append(msg)
-                        break
-                    except GenerationError as exc:
-                        msg = f"{target.display_name}: {exc}"
-                        logger.warning(msg)
-                        if attempt == retry_count - 1:
-                            execution_errors.append(msg)
-                    except Exception as exc:
-                        msg = f"{target.display_name}: {exc}"
-                        logger.error(msg)
-                        if attempt == retry_count - 1:
-                            execution_errors.append(msg)
+                except (asyncio.TimeoutError, TimeoutError):
+                    timeout_label = self._format_timeout_label(target)
+                    msg = f"{target.display_name}: 请求超时（{timeout_label}）"
+                    logger.warning(msg)
+                    if attempt == retry_count - 1:
+                        execution_errors.append(msg)
+                except Exception as exc:
+                    detail = str(exc).strip() or type(exc).__name__
+                    msg = f"{target.display_name}: {detail}"
+                    logger.error(msg)
+                    if attempt == retry_count - 1:
+                        execution_errors.append(msg)
 
         if had_sensitive:
             raise SensitiveContentError(mode)
@@ -349,6 +352,44 @@ class GenerationService:
         if target.max_generation_count is not None and target.max_generation_count >= 0:
             return target.max_generation_count
         return self.global_max_generation_count
+
+    def _resolve_configured_timeout_seconds(self, target: GenerationTarget) -> int | None:
+        """Return configured timeout seconds, or None for unlimited.
+
+        Workflow targets use their runtime timeout_seconds. API models follow
+        either the global default or a per-entry custom value.
+        """
+        if isinstance(target, WorkflowConfig):
+            seconds = target.resolve_runtime_config(
+                self.workflow_runtime_default
+            ).timeout_seconds
+            if seconds is None or int(seconds) < 0:
+                return None
+            return max(1, int(seconds))
+
+        if getattr(target, "timeout_mode", "follow_global") == "custom":
+            seconds = parse_int(getattr(target, "timeout_seconds", -1), -1)
+        else:
+            seconds = parse_int(self.global_timeout_seconds, 180)
+
+        if seconds < 0:
+            return None
+        return max(1, seconds)
+
+    def _build_client_timeout(self, target: GenerationTarget) -> aiohttp.ClientTimeout:
+        configured = self._resolve_configured_timeout_seconds(target)
+        if configured is None:
+            return aiohttp.ClientTimeout(total=None)
+        # Workflow sessions keep a small buffer so polling can finish near the limit.
+        if isinstance(target, WorkflowConfig):
+            return aiohttp.ClientTimeout(total=max(1, configured + 30))
+        return aiohttp.ClientTimeout(total=configured)
+
+    def _format_timeout_label(self, target: GenerationTarget) -> str:
+        configured = self._resolve_configured_timeout_seconds(target)
+        if configured is None:
+            return "不限制"
+        return f"{configured}s"
 
     def _get_workflow_node_bindings(self, workflow_id: str) -> list[WorkflowNodeBinding]:
         return [

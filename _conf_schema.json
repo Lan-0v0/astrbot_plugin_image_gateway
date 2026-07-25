@@ -6,6 +6,13 @@
     "default": true,
     "obvious_hint": true
   },
+  "global_timeout_seconds": {
+    "description": "全局默认超时时间",
+    "hint": "单位秒。图像生成模型 API 请求的默认超时；-1 表示不限制。条目可选择跟随全局或自定义。",
+    "type": "int",
+    "default": 180,
+    "obvious_hint": true
+  },
   "global_retry_count": {
     "description": "全局默认重试次数",
     "hint": "单个模型未单独配置（-1）时使用此值",
@@ -94,18 +101,6 @@
             "type": "string",
             "default": "gpt-image-2"
           },
-          "retry_count": {
-            "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
@@ -164,11 +159,40 @@
               "自动 (auto)"
             ]
           },
-          "seed": {
-            "description": "随机种子",
-            "hint": "留空表示随机；部分模型/网关不支持",
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
             "type": "string",
-            "default": ""
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -298,18 +322,6 @@
             "type": "string",
             "default": "gemini-2.0-flash-preview-image-generation"
           },
-          "retry_count": {
-            "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
@@ -371,11 +383,40 @@
               "默认 (default)"
             ]
           },
-          "seed": {
-            "description": "随机种子",
-            "hint": "留空表示随机",
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
             "type": "string",
-            "default": ""
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -504,18 +545,6 @@
             "type": "string",
             "default": "wan2.6-t2i"
           },
-          "retry_count": {
-            "description": "重试次数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "hint": "-1 表示使用全局默认",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
@@ -577,6 +606,29 @@
               "自动"
             ]
           },
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
+            "type": "string",
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
           "negative_prompt": {
             "description": "反向提示词",
             "hint": "可选；用于限制不希望出现的画面元素",
@@ -603,11 +655,17 @@
             "type": "string",
             "default": "0.8"
           },
-          "seed": {
-            "description": "随机种子",
-            "hint": "留空表示随机",
-            "type": "string",
-            "default": ""
+          "retry_count": {
+            "description": "重试次数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "hint": "-1 表示使用全局默认",
+            "type": "int",
+            "default": -1
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -732,16 +790,6 @@
             "type": "string",
             "default": "doubao-seedream-3-0-t2i-250415"
           },
-          "retry_count": {
-            "description": "重试次数",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
@@ -794,10 +842,38 @@
               "Base64"
             ]
           },
-          "seed": {
-            "description": "随机种子",
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
             "type": "string",
-            "default": ""
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "type": "int",
+            "default": -1
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -922,16 +998,6 @@
             "type": "string",
             "default": "image-01"
           },
-          "retry_count": {
-            "description": "重试次数",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
@@ -995,10 +1061,38 @@
             "type": "bool",
             "default": false
           },
-          "seed": {
-            "description": "随机种子",
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
             "type": "string",
-            "default": ""
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "type": "int",
+            "default": -1
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -1123,16 +1217,6 @@
             "type": "string",
             "default": "cogview-4-250304"
           },
-          "retry_count": {
-            "description": "重试次数",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
@@ -1171,10 +1255,38 @@
               "720x1440"
             ]
           },
-          "seed": {
-            "description": "随机种子",
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
             "type": "string",
-            "default": ""
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "type": "int",
+            "default": -1
           },
           "dedicated_command": {
             "description": "专属指令",
@@ -1299,16 +1411,6 @@
             "type": "string",
             "default": "hunyuan-image"
           },
-          "retry_count": {
-            "description": "重试次数",
-            "type": "int",
-            "default": -1
-          },
-          "max_generation_count": {
-            "description": "单次请求最大生成张数",
-            "type": "int",
-            "default": -1
-          },
           "supported_modes": {
             "description": "支持模式",
             "hint": "默认文生图 + 改图；如果该模型仅支持文生图或仅支持改图，可切换对应选项",
@@ -1356,10 +1458,38 @@
             "type": "string",
             "default": ""
           },
-          "seed": {
-            "description": "随机种子",
+          "timeout_mode": {
+            "description": "超时时间",
+            "hint": "跟随全局使用上方「全局默认超时时间」；自定义后可单独设置秒数，-1 表示不限制",
             "type": "string",
-            "default": ""
+            "default": "follow_global",
+            "options": [
+              "follow_global",
+              "custom"
+            ],
+            "labels": [
+              "跟随全局",
+              "自定义超时时间"
+            ]
+          },
+          "timeout_seconds": {
+            "description": "自定义超时时间（秒）",
+            "hint": "-1 表示不限制；正整数为超时秒数",
+            "type": "int",
+            "default": -1,
+            "condition": {
+              "timeout_mode": "custom"
+            }
+          },
+          "retry_count": {
+            "description": "重试次数",
+            "type": "int",
+            "default": -1
+          },
+          "max_generation_count": {
+            "description": "单次请求最大生成张数",
+            "type": "int",
+            "default": -1
           },
           "dedicated_command": {
             "description": "专属指令",
