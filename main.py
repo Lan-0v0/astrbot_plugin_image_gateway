@@ -21,6 +21,7 @@ from .services.counter import GenerationCounter
 from .services.fake_forward import FakeForwardConfig, FakeForwardMode, parse_global_fake_forward
 from .services.generation import GenerationService
 from .services.image_cache import cleanup_expired_image_cache, parse_image_cache_cleanup_days
+from .services.image_pdf import ImagePdfConfig, convert_images_to_pdf
 from .services.send_strategy import SendStrategy, get_sender_order, parse_global_send_strategy
 from .utils.commands import (
     parse_dedicated_command_text,
@@ -123,7 +124,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.1.6",
+    "2.1.7",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -658,6 +659,13 @@ class ImageGatewayPlugin(Star):
             )
             return {"type": "image", "data": {"file": f"base64://{raw_base64}"}}
 
+        if isinstance(component, Comp.File):
+            try:
+                return await component.to_dict()
+            except Exception as exc:
+                logger.warning(f"PDF 文件转换失败，平台客户端无法发送: {exc}")
+                return None
+
         return None
 
     async def _send_plain_text_directly(
@@ -777,6 +785,52 @@ class ImageGatewayPlugin(Star):
 
         yield event.chain_result(merged_chain)
 
+    async def _send_pdf_result(
+        self,
+        event: AstrMessageEvent,
+        summary_text: str,
+        pdf_path: Path,
+        pdf_filename: str,
+        *,
+        fake_forward_config: FakeForwardConfig,
+        send_strategy: SendStrategy,
+    ):
+        sender_order = get_sender_order(send_strategy)
+
+        if fake_forward_config.enabled:
+            summary_chain = await self._build_fake_forward_chain(
+                event,
+                summary_text,
+                [],
+                fake_forward_config,
+            )
+            if summary_chain:
+                summary_sent = await self._send_message_chain_directly(
+                    event,
+                    summary_chain,
+                    sender_order=sender_order,
+                )
+                if not summary_sent:
+                    yield event.chain_result(summary_chain)
+        elif summary_text:
+            summary_sent = await self._send_plain_text_directly(
+                event,
+                summary_text,
+                sender_order=sender_order,
+            )
+            if not summary_sent:
+                yield event.plain_result(summary_text)
+
+        # QQ 合并转发节点对文件兼容性有限，PDF 始终作为独立文件消息发送。
+        pdf_component = Comp.File(name=pdf_filename, file=str(pdf_path))
+        if await self._send_message_chain_directly(
+            event,
+            [pdf_component],
+            sender_order=sender_order,
+        ):
+            return
+        yield event.chain_result([pdf_component])
+
     async def _build_image_component(self, image_path: str) -> Image:
         callback_api_base = self.context.get_config().get("callback_api_base")
         if not callback_api_base:
@@ -841,8 +895,17 @@ class ImageGatewayPlugin(Star):
             }
             if dedicated_command:
                 generation_kwargs["dedicated_command"] = dedicated_command
-            paths, _model_name, effective_send_strategy, effective_fake_forward = await self.generation_service.generate(
-                **generation_kwargs
+            generation_result = await self.generation_service.generate(**generation_kwargs)
+            (
+                paths,
+                model_name,
+                effective_send_strategy,
+                effective_fake_forward,
+            ) = generation_result
+            effective_image_to_pdf = getattr(
+                generation_result,
+                "image_to_pdf",
+                ImagePdfConfig(),
             )
         except GenerationError as exc:
             await self._retract_start_message(event, start_message.message_id)
@@ -859,6 +922,27 @@ class ImageGatewayPlugin(Star):
         await self._retract_start_message(event, start_message.message_id)
 
         image_paths = [str(path) for path in paths]
+        if effective_image_to_pdf.enabled:
+            try:
+                pdf_path, pdf_filename = await convert_images_to_pdf(
+                    image_paths,
+                    self.generation_service.output_dir,
+                    model_name,
+                )
+            except Exception as exc:
+                logger.error(f"图片转换 PDF 失败，将回退发送原图: {exc}")
+            else:
+                async for result in self._send_pdf_result(
+                    event,
+                    success_message_text,
+                    pdf_path,
+                    pdf_filename,
+                    fake_forward_config=effective_fake_forward,
+                    send_strategy=effective_send_strategy,
+                ):
+                    yield result
+                return
+
         if effective_fake_forward.enabled:
             async for result in self._send_fake_forward_result(
                 event,

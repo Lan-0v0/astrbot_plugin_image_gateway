@@ -13,6 +13,7 @@ from ..utils.config import (
     parse_positive_int,
 )
 from .fake_forward import normalize_custom_qq, parse_entry_fake_forward_mode
+from .image_pdf import parse_entry_image_to_pdf_mode
 from .priority import resolve_priority_value
 from .send_strategy import parse_entry_send_strategy
 
@@ -151,6 +152,7 @@ class WorkflowConfig:
     dedicated_command: str = ""
     timeout_mode: str = "follow_global"
     timeout_seconds: int = -1
+    image_to_pdf_mode: str = "follow_global"
     fake_forward_mode: str = "follow_global"
     fake_forward_custom_qq: str = ""
     runtime_base_url_override: str = ""
@@ -200,6 +202,7 @@ class WorkflowConfig:
             dedicated_command=normalize_dedicated_command(entry.get("dedicated_command")),
             timeout_mode=timeout_mode,
             timeout_seconds=parse_int(entry.get("timeout_seconds"), -1),
+            image_to_pdf_mode=parse_entry_image_to_pdf_mode(entry.get("image_to_pdf_mode")),
             fake_forward_mode=parse_entry_fake_forward_mode(entry.get("fake_forward_mode")),
             fake_forward_custom_qq=normalize_custom_qq(entry.get("fake_forward_custom_qq")),
             runtime_base_url_override=str(entry.get("runtime_base_url_override") or "").strip(),

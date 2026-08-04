@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Union
 
@@ -12,6 +12,11 @@ from astrbot.api import logger
 from ..adapters import GenerationError, ModelConfig, SensitiveContentError, get_adapter
 from .counter import GenerationCounter
 from .fake_forward import FakeForwardConfig, parse_global_fake_forward, resolve_effective_fake_forward
+from .image_pdf import (
+    ImagePdfConfig,
+    parse_global_image_to_pdf,
+    resolve_effective_image_to_pdf,
+)
 from .send_strategy import (
     DEFAULT_GLOBAL_SEND_STRATEGY,
     SendStrategy,
@@ -29,6 +34,22 @@ Mode = Literal["text_to_image", "image_to_image"]
 GenerationTarget = Union[ModelConfig, WorkflowConfig]
 
 
+@dataclass(frozen=True, slots=True)
+class GenerationResult:
+    paths: list[Path]
+    target_name: str
+    send_strategy: SendStrategy
+    fake_forward: FakeForwardConfig
+    image_to_pdf: ImagePdfConfig
+
+    def __iter__(self):
+        """Keep the historical four-value unpacking contract for callers."""
+        yield self.paths
+        yield self.target_name
+        yield self.send_strategy
+        yield self.fake_forward
+
+
 class GenerationService:
     """Schedules image generation across model and workflow targets."""
 
@@ -44,6 +65,7 @@ class GenerationService:
         counter: GenerationCounter,
         global_send_strategy: SendStrategy = DEFAULT_GLOBAL_SEND_STRATEGY,
         global_fake_forward: FakeForwardConfig | None = None,
+        global_image_to_pdf: ImagePdfConfig | None = None,
         workflow_runtime_default: WorkflowRuntimeConfig | None = None,
     ):
         self.targets = targets
@@ -56,6 +78,7 @@ class GenerationService:
         self.counter = counter
         self.global_send_strategy = global_send_strategy
         self.global_fake_forward = global_fake_forward or FakeForwardConfig()
+        self.global_image_to_pdf = global_image_to_pdf or ImagePdfConfig()
         self.workflow_runtime_default = workflow_runtime_default or WorkflowRuntimeConfig()
         self._comfyui_runner = ComfyUIWorkflowRunner()
         self._a1111_runner = A1111WorkflowRunner()
@@ -97,6 +120,7 @@ class GenerationService:
             counter=counter,
             global_send_strategy=parse_global_send_strategy(config.get("send_strategy")),
             global_fake_forward=parse_global_fake_forward(config.get("fake_forward")),
+            global_image_to_pdf=parse_global_image_to_pdf(config.get("image_to_pdf")),
             workflow_runtime_default=WorkflowRuntimeConfig.from_raw(config.get("workflow_runtime_default")),
         )
 
@@ -109,7 +133,7 @@ class GenerationService:
         input_images: list[str] | None = None,
         dedicated_command: str | None = None,
         size_override: str | None = None,
-    ) -> tuple[list[Path], str, SendStrategy, FakeForwardConfig]:
+    ) -> GenerationResult:
         targets = self._select_targets(dedicated_command)
         requested_count = self._normalize_requested_count(mode, count)
         self.validate_request_count(
@@ -165,7 +189,17 @@ class GenerationService:
                             entry_mode=target.fake_forward_mode,
                             entry_custom_qq=target.fake_forward_custom_qq,
                         )
-                        return paths, target.display_name, effective_send_strategy, effective_fake_forward
+                        effective_image_to_pdf = resolve_effective_image_to_pdf(
+                            global_config=self.global_image_to_pdf,
+                            entry_mode=target.image_to_pdf_mode,
+                        )
+                        return GenerationResult(
+                            paths=paths,
+                            target_name=target.display_name,
+                            send_strategy=effective_send_strategy,
+                            fake_forward=effective_fake_forward,
+                            image_to_pdf=effective_image_to_pdf,
+                        )
                 except SensitiveContentError as exc:
                     had_sensitive = True
                     msg = f"{target.display_name}: {exc}"

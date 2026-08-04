@@ -234,6 +234,14 @@
             "type": "string",
             "default": ""
           },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "hint": "跟随全局表示使用下方「全局消息伪造转发」配置；开启后会在生成完成时合并转发开始提示与图片",
@@ -491,6 +499,14 @@
             "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
             "type": "string",
             "default": ""
+          },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
@@ -775,6 +791,14 @@
             "type": "string",
             "default": ""
           },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
@@ -1018,6 +1042,14 @@
             "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
             "type": "string",
             "default": ""
+          },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
@@ -1274,6 +1306,14 @@
             "type": "string",
             "default": ""
           },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "type": "string",
@@ -1503,6 +1543,14 @@
             "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
             "type": "string",
             "default": ""
+          },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
@@ -1742,6 +1790,14 @@
             "hint": "默认留空，继续使用 /生图 和 /改图；填写时无需输入 /。配置后该条目退出默认指令调度，改由此指令单独调用；附带或引用图片时自动改图",
             "type": "string",
             "default": ""
+          },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
@@ -1991,6 +2047,14 @@
               "max_generation_mode": "custom"
             }
           },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
+          },
           "fake_forward_mode": {
             "description": "消息伪造转发",
             "hint": "跟随全局表示使用下方「全局消息伪造转发」配置；开启后会在生成完成时合并转发开始提示与图片",
@@ -2199,6 +2263,14 @@
             "condition": {
               "max_generation_mode": "custom"
             }
+          },
+          "image_to_pdf_mode": {
+            "description": "图片转PDF",
+            "hint": "跟随全局表示使用下方「全局图片转PDF」开关；开启后将本次生成的全部图片合并为一个 PDF 文件发送",
+            "type": "string",
+            "default": "follow_global",
+            "options": ["follow_global", "on", "off"],
+            "labels": ["跟随全局", "开启", "关闭"]
           },
           "fake_forward_mode": {
             "description": "消息伪造转发",
@@ -2566,6 +2638,12 @@
         }
       }
     }
+  },
+  "image_to_pdf": {
+    "description": "全局图片转PDF",
+    "hint": "开启后，将本次生成的全部图片合并为一个 PDF 文件发送；各模型和工作流可单独覆盖",
+    "type": "bool",
+    "default": false
   },
   "fake_forward": {
     "description": "全局消息伪造转发",

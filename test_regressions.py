@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 from tempfile import TemporaryDirectory
 import types
@@ -11,6 +12,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
+
+from PIL import Image as PillowImage
 
 
 def install_astrbot_test_stubs() -> None:
@@ -57,6 +60,18 @@ def install_astrbot_test_stubs() -> None:
     class DummyNodes:
         def __init__(self, nodes=None):
             self.nodes = nodes or []
+
+    class DummyFile:
+        def __init__(self, name: str, file: str = "", url: str = ""):
+            self.name = name
+            self.file = file
+            self.url = url
+
+        async def to_dict(self):
+            return {
+                "type": "file",
+                "data": {"name": self.name, "file": self.file or self.url},
+            }
 
     class DummyReply:
         def __init__(self, chain=None):
@@ -122,6 +137,7 @@ def install_astrbot_test_stubs() -> None:
     astrbot_api_message_components_module.Plain = DummyPlain
     astrbot_api_message_components_module.Node = DummyNode
     astrbot_api_message_components_module.Nodes = DummyNodes
+    astrbot_api_message_components_module.File = DummyFile
     astrbot_api_star_module.Context = DummyContext
     astrbot_api_star_module.Star = DummyStar
     astrbot_api_star_module.StarTools = DummyStarTools
@@ -194,6 +210,13 @@ from astrbot_plugin_image_gateway.services.image_cache import (  # noqa: E402
     DEFAULT_IMAGE_CACHE_CLEANUP_DAYS,
     cleanup_expired_image_cache,
     parse_image_cache_cleanup_days,
+)
+from astrbot_plugin_image_gateway.services.image_pdf import (  # noqa: E402
+    ImagePdfConfig,
+    build_pdf_filename,
+    convert_images_to_pdf,
+    parse_entry_image_to_pdf_mode,
+    resolve_effective_image_to_pdf,
 )
 from astrbot_plugin_image_gateway.services.send_strategy import (  # noqa: E402
     FOLLOW_GLOBAL,
@@ -1113,9 +1136,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.6", metadata)
-        self.assertIn('"2.1.6",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.6"))
+        self.assertIn("version: 2.1.7", metadata)
+        self.assertIn('"2.1.7",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.7"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -1139,6 +1162,51 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
     def test_model_config_send_strategy_defaults_to_follow_global(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
         self.assertEqual(model_config.send_strategy, "follow_global")
+
+    def test_model_config_image_to_pdf_defaults_to_follow_global(self) -> None:
+        model_config = ModelConfig.from_template_entry({"provider": "openai"})
+        self.assertEqual(model_config.image_to_pdf_mode, "follow_global")
+
+    def test_image_to_pdf_mode_resolves_entry_override(self) -> None:
+        self.assertEqual(parse_entry_image_to_pdf_mode("unexpected"), "follow_global")
+        self.assertTrue(
+            resolve_effective_image_to_pdf(
+                global_config=ImagePdfConfig(enabled=False),
+                entry_mode="on",
+            ).enabled
+        )
+        self.assertFalse(
+            resolve_effective_image_to_pdf(
+                global_config=ImagePdfConfig(enabled=True),
+                entry_mode="off",
+            ).enabled
+        )
+
+    def test_pdf_filename_uses_lan_prefix_and_sanitizes_entry_name(self) -> None:
+        self.assertEqual(build_pdf_filename("生图1"), "Lanの生图1.pdf")
+        self.assertEqual(build_pdf_filename("a:b"), "Lanのa_b.pdf")
+
+    def test_convert_images_to_pdf_combines_all_images(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            first_image_path = output_dir / "first.png"
+            second_image_path = output_dir / "second.png"
+            PillowImage.new("RGBA", (20, 30), (255, 0, 0, 128)).save(first_image_path)
+            PillowImage.new("RGB", (40, 50), "blue").save(second_image_path)
+
+            pdf_path, pdf_filename = asyncio.run(
+                convert_images_to_pdf(
+                    [first_image_path, second_image_path],
+                    output_dir,
+                    "生图1",
+                )
+            )
+
+            self.assertEqual(pdf_filename, "Lanの生图1.pdf")
+            self.assertTrue(pdf_path.is_file())
+            pdf_bytes = pdf_path.read_bytes()
+            self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+            self.assertEqual(len(re.findall(rb"/Type /Page\b", pdf_bytes)), 2)
 
     def test_model_config_send_strategy_parses_explicit_value(self) -> None:
         model_config = ModelConfig.from_template_entry(
@@ -4278,6 +4346,10 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
                 self.assertEqual(items["dedicated_command"]["default"], "")
                 self.assertEqual(
                     keys.index("dedicated_command") + 1,
+                    keys.index("image_to_pdf_mode"),
+                )
+                self.assertEqual(
+                    keys.index("image_to_pdf_mode") + 1,
                     keys.index("fake_forward_mode"),
                 )
 
@@ -4294,6 +4366,10 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     keys.index("max_generation_count") + 1,
+                    keys.index("image_to_pdf_mode"),
+                )
+                self.assertEqual(
+                    keys.index("image_to_pdf_mode") + 1,
                     keys.index("fake_forward_mode"),
                 )
 
@@ -4415,6 +4491,10 @@ class DedicatedCommandParsingRegressionTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     keys.index("max_generation_count") + 1,
+                    keys.index("image_to_pdf_mode"),
+                )
+                self.assertEqual(
+                    keys.index("image_to_pdf_mode") + 1,
                     keys.index("fake_forward_mode"),
                 )
 
