@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+from astrbot.api import logger
 
 from ..adapters.base import GenerationError
 from ..utils.storage import save_binary_image
@@ -19,6 +20,10 @@ from .workflow_merge import merge_workflow_payload
 
 class ComfyUIWorkflowRunner:
     """Submit ComfyUI workflows for both text-to-image and image-to-image modes."""
+
+    # Extra waiting granted while ComfyUI still reports the prompt as queued.
+    QUEUE_GRACE_SECONDS = 60
+    MAX_QUEUE_GRACE_ROUNDS = 30
 
     async def generate_text_to_image(
         self,
@@ -100,6 +105,10 @@ class ComfyUIWorkflowRunner:
 
         client_id = str(uuid.uuid4())
         prompt_id = await self._submit_prompt(session, runtime_config.base_url, headers, payload, client_id)
+        logger.info(
+            f"工作流「{workflow_config.display_name}」已提交 ComfyUI，prompt_id={prompt_id}，"
+            f"轮询超时 {runtime_config.timeout_seconds}s"
+        )
         history_entry = await self._wait_for_history(
             session,
             runtime_config.base_url,
@@ -112,11 +121,16 @@ class ComfyUIWorkflowRunner:
         image_references = self._extract_image_references(history_entry)
         if not image_references:
             raise GenerationError(f"工作流「{workflow_config.display_name}」未返回任何图片输出")
+        logger.info(
+            f"ComfyUI 任务 {prompt_id} 返回 {len(image_references)} 张图片，"
+            f"将取回前 {min(len(image_references), max(1, count))} 张"
+        )
 
         saved_paths: list[Path] = []
         for image_reference in image_references[: max(1, count)]:
             image_bytes = await self._download_image(session, runtime_config.base_url, headers, image_reference)
             saved_paths.append(await save_binary_image(image_bytes, output_dir, prefix="comfyui"))
+        logger.info(f"ComfyUI 任务 {prompt_id} 图片取回完成，已保存 {len(saved_paths)} 张，准备发送")
         return saved_paths
 
     @staticmethod
@@ -210,20 +224,34 @@ class ComfyUIWorkflowRunner:
         timeout_seconds: int,
         poll_interval_seconds: float,
     ) -> dict[str, Any]:
+        """Poll ``/history`` until the prompt produces outputs.
+
+        The deadline is only enforced when ComfyUI has actually stopped working on
+        the prompt. A queued or running prompt keeps the wait alive in grace
+        windows, because abandoning a job that ComfyUI is still executing throws
+        away an image that lands moments later — the timeout is meant to catch a
+        lost job, not a slow one.
+        """
         url = f"{base_url}/history/{prompt_id}"
         poll_interval_seconds = max(0.1, poll_interval_seconds)
         deadline = time.monotonic() + max(1, timeout_seconds)
+        grace_rounds_left = self.MAX_QUEUE_GRACE_ROUNDS
+        polls = 0
 
-        while time.monotonic() < deadline:
+        while True:
             async with session.get(url, headers=headers) as resp:
                 data = await resp.json(content_type=None)
                 if resp.status != 200:
                     message = self._extract_error_message(data, resp.status)
                     raise GenerationError(f"ComfyUI 查询任务失败: {message}")
+                polls += 1
                 if isinstance(data, dict) and prompt_id in data:
                     history_entry = data[prompt_id]
                     if isinstance(history_entry, dict):
                         if history_entry.get("outputs"):
+                            logger.info(
+                                f"ComfyUI 任务 {prompt_id} 已完成（轮询 {polls} 次），开始取回图片"
+                            )
                             return history_entry
                         history_error = self._extract_history_error(history_entry)
                         if history_error:
@@ -234,8 +262,65 @@ class ComfyUIWorkflowRunner:
             remaining_seconds = deadline - time.monotonic()
             if remaining_seconds > 0:
                 await asyncio.sleep(min(poll_interval_seconds, remaining_seconds))
+                continue
 
-        raise GenerationError("ComfyUI 任务超时，未在指定时间内完成")
+            # Deadline reached. Only give up if ComfyUI no longer has the prompt:
+            # the image is often written between the last poll and this check.
+            if not await self._is_prompt_active(session, base_url, headers, prompt_id):
+                break
+            if grace_rounds_left <= 0:
+                raise GenerationError(
+                    "ComfyUI 任务仍在队列中但已超过等待上限，"
+                    f"已等待约 {int(timeout_seconds + self.MAX_QUEUE_GRACE_ROUNDS * self.QUEUE_GRACE_SECONDS)}s，"
+                    "请提高该工作流的超时时间或检查 ComfyUI 是否卡住"
+                )
+            grace_rounds_left -= 1
+            deadline = time.monotonic() + self.QUEUE_GRACE_SECONDS
+            logger.info(
+                f"ComfyUI 任务 {prompt_id} 已超过设定超时但仍在队列中执行，"
+                f"继续等待 {self.QUEUE_GRACE_SECONDS}s（剩余宽限 {grace_rounds_left} 轮）"
+            )
+            await asyncio.sleep(poll_interval_seconds)
+
+        raise GenerationError(
+            f"ComfyUI 任务超时，未在指定时间内完成（已轮询 {polls} 次，"
+            "且 ComfyUI 队列中已无该任务）"
+        )
+
+    async def _is_prompt_active(
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str,
+        headers: dict[str, str],
+        prompt_id: str,
+    ) -> bool:
+        """Report whether ComfyUI still lists the prompt as running or pending.
+
+        A failure to read ``/queue`` is treated as "still active" so a transient
+        error on the liveness check cannot discard a job that is fine.
+        """
+        try:
+            async with session.get(f"{base_url}/queue", headers=headers) as resp:
+                if resp.status != 200:
+                    return True
+                data = await resp.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logger.warning(f"ComfyUI 队列状态查询失败，按仍在执行处理: {exc}")
+            return True
+
+        if not isinstance(data, dict):
+            return True
+        for queue_key in ("queue_running", "queue_pending"):
+            entries = data.get(queue_key)
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, (list, tuple)):
+                    continue
+                # Queue items are tuples of (number, prompt_id, prompt, extra, outputs).
+                if any(str(field) == prompt_id for field in entry[:2]):
+                    return True
+        return False
 
     @staticmethod
     def _extract_history_error(history_entry: dict[str, Any]) -> str:
@@ -259,10 +344,18 @@ class ComfyUIWorkflowRunner:
 
     @staticmethod
     def _extract_image_references(history_entry: dict[str, Any]) -> list[dict[str, str]]:
-        image_references: list[dict[str, str]] = []
+        """Collect output images, listing saved results before temporary previews.
+
+        Workflows built on node packs such as Impact Pack often contain a
+        PreviewImage node alongside SaveImage. Preview images land in ComfyUI's
+        ``temp`` directory and get cleaned up, so taking them first can download
+        the wrong picture or fail outright even though the real output exists.
+        """
+        saved_references: list[dict[str, str]] = []
+        temporary_references: list[dict[str, str]] = []
         outputs = history_entry.get("outputs") or {}
         if not isinstance(outputs, dict):
-            return image_references
+            return []
 
         for node_output in outputs.values():
             if not isinstance(node_output, dict):
@@ -271,9 +364,14 @@ class ComfyUIWorkflowRunner:
             if not isinstance(images, list):
                 continue
             for image_entry in images:
-                if isinstance(image_entry, dict) and image_entry.get("filename"):
-                    image_references.append(image_entry)
-        return image_references
+                if not isinstance(image_entry, dict) or not image_entry.get("filename"):
+                    continue
+                image_type = str(image_entry.get("type") or "").strip().lower()
+                if image_type and image_type != "output":
+                    temporary_references.append(image_entry)
+                else:
+                    saved_references.append(image_entry)
+        return saved_references + temporary_references
 
     async def _download_image(
         self,
@@ -287,15 +385,20 @@ class ComfyUIWorkflowRunner:
             raise GenerationError("ComfyUI 输出缺少图片文件名")
 
         last_error = ""
-        for params, url in self._build_download_attempts(base_url, image_reference):
+        attempts = self._build_download_attempts(base_url, image_reference)
+        for attempt_index, (params, url) in enumerate(attempts, start=1):
             async with session.get(url, params=params, headers=headers) as resp:
                 if resp.status == 200:
                     image_bytes = await resp.read()
                     if image_bytes:
                         return image_bytes
                     last_error = "返回了空图片数据"
-                    continue
-                last_error = await self._describe_download_failure(resp)
+                else:
+                    last_error = await self._describe_download_failure(resp)
+            logger.warning(
+                f"ComfyUI 下载图片 {filename} 第 {attempt_index}/{len(attempts)} 次尝试失败"
+                f"（{url}，参数 {params}）: {last_error}"
+            )
 
         raise GenerationError(f"ComfyUI 下载图片失败: {last_error or '未知错误'}")
 

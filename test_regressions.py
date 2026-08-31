@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
 from PIL import Image as PillowImage
 
 
@@ -1149,9 +1150,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.8", metadata)
-        self.assertIn('"2.1.8",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.8"))
+        self.assertIn("version: 2.1.9", metadata)
+        self.assertIn('"2.1.9",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.9"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -3532,6 +3533,265 @@ class ComfyUIImageDownloadRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(session.view_requests), 1)
         self.assertNotIn("subfolder", session.view_requests[0])
+
+
+class ComfyUIRetrievalRegressionTests(unittest.IsolatedAsyncioTestCase):
+    """v2.1.9: ComfyUI finished the image but the bot never sent it.
+
+    Two retrieval-side defects. ``_wait_for_history`` gave up the instant the
+    configured timeout elapsed, even while ComfyUI was still executing the prompt,
+    so a job finishing at 177.95s under a stale 180s timeout was abandoned without
+    a single ``/view`` request. And ``_extract_image_references`` returned outputs
+    in raw dict order, so an Impact Pack PreviewImage (``type=temp``, cleaned up by
+    ComfyUI) could be downloaded instead of the real SaveImage result.
+    """
+
+    class QueueAwareSession:
+        """Fake ComfyUI: history stays empty until ``ready_after_polls`` polls."""
+
+        def __init__(
+            self,
+            *,
+            ready_after_polls: int,
+            prompt_id: str = "prompt-slow",
+            queued: bool = True,
+            queue_status: int = 200,
+            queue_key: str = "queue_running",
+        ):
+            self.ready_after_polls = ready_after_polls
+            self.prompt_id = prompt_id
+            self.queued = queued
+            self.queue_status = queue_status
+            self.queue_key = queue_key
+            self.history_polls = 0
+            self.queue_polls = 0
+            self.view_requests: list[dict[str, str]] = []
+
+        def get(self, url: str, **kwargs):
+            response_class = ComfyUIWorkflowRunnerRegressionTests.FakeResponse
+            if "/history/" in url:
+                self.history_polls += 1
+                if self.history_polls < self.ready_after_polls:
+                    return response_class(json_data={})
+                return response_class(
+                    json_data={
+                        self.prompt_id: {
+                            "outputs": {
+                                "save": {
+                                    "images": [
+                                        {
+                                            "filename": "ComfyUI_00042_.png",
+                                            "subfolder": "",
+                                            "type": "output",
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                )
+            if url.endswith("/queue"):
+                self.queue_polls += 1
+                if self.queue_status != 200:
+                    return response_class(json_data={}, status=self.queue_status)
+                entries = [[1, self.prompt_id, {}, {}, []]] if self.queued else []
+                return response_class(json_data={self.queue_key: entries})
+            self.view_requests.append(dict(kwargs.get("params") or {}))
+            return ComfyUIImageDownloadRegressionTests.RecordingResponse(body=b"png-bytes")
+
+    async def wait(self, runner, session, **overrides):
+        options = {"timeout_seconds": 1, "poll_interval_seconds": 0.4}
+        options.update(overrides)
+        return await runner._wait_for_history(
+            session,
+            "http://127.0.0.1:8188",
+            {},
+            session.prompt_id,
+            **options,
+        )
+
+    async def test_a_running_prompt_is_not_abandoned_at_the_deadline(self) -> None:
+        """The historical failure: deadline hit while ComfyUI was still working."""
+        runner = ComfyUIWorkflowRunner()
+        session = self.QueueAwareSession(ready_after_polls=8)
+
+        history_entry = await self.wait(runner, session)
+
+        self.assertTrue(history_entry.get("outputs"))
+        self.assertGreaterEqual(session.history_polls, 8)
+        self.assertGreaterEqual(session.queue_polls, 1)
+
+    async def test_a_pending_prompt_also_keeps_the_wait_alive(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        session = self.QueueAwareSession(ready_after_polls=6, queue_key="queue_pending")
+
+        history_entry = await self.wait(runner, session)
+
+        self.assertTrue(history_entry.get("outputs"))
+
+    async def test_timeout_still_fires_once_comfyui_dropped_the_prompt(self) -> None:
+        """A genuinely lost job must not hang forever."""
+        runner = ComfyUIWorkflowRunner()
+        session = self.QueueAwareSession(ready_after_polls=999, queued=False)
+
+        with self.assertRaises(GenerationError) as raised_error:
+            await self.wait(runner, session)
+
+        message = str(raised_error.exception)
+        self.assertIn("ComfyUI 任务超时", message)
+        self.assertIn("队列中已无该任务", message)
+        self.assertEqual(session.view_requests, [])
+
+    async def test_unreadable_queue_is_treated_as_still_running(self) -> None:
+        """A transient /queue error must not discard a healthy job."""
+        runner = ComfyUIWorkflowRunner()
+        session = self.QueueAwareSession(ready_after_polls=5, queue_status=500)
+
+        history_entry = await self.wait(runner, session)
+
+        self.assertTrue(history_entry.get("outputs"))
+
+    async def test_queue_liveness_failure_is_swallowed(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+
+        class BrokenQueueSession(self.QueueAwareSession):
+            def get(self, url: str, **kwargs):
+                if url.endswith("/queue"):
+                    raise aiohttp.ClientError("connection reset")
+                return super().get(url, **kwargs)
+
+        session = BrokenQueueSession(ready_after_polls=5)
+        history_entry = await self.wait(runner, session)
+
+        self.assertTrue(history_entry.get("outputs"))
+
+    async def test_grace_waiting_is_bounded(self) -> None:
+        """A stuck ComfyUI eventually reports an actionable error."""
+        runner = ComfyUIWorkflowRunner()
+        session = self.QueueAwareSession(ready_after_polls=999)
+
+        with patch.object(ComfyUIWorkflowRunner, "MAX_QUEUE_GRACE_ROUNDS", 2), patch.object(
+            ComfyUIWorkflowRunner, "QUEUE_GRACE_SECONDS", 0
+        ):
+            with self.assertRaises(GenerationError) as raised_error:
+                await self.wait(runner, session)
+
+        message = str(raised_error.exception)
+        self.assertIn("仍在队列中", message)
+        self.assertIn("等待上限", message)
+
+    async def test_execution_errors_are_still_raised_immediately(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+
+        class FailingSession(self.QueueAwareSession):
+            def get(self, url: str, **kwargs):
+                if "/history/" in url:
+                    self.history_polls += 1
+                    return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(
+                        json_data={
+                            self.prompt_id: {
+                                "outputs": {},
+                                "status": {
+                                    "status_str": "error",
+                                    "messages": [
+                                        ["execution_error", {"exception_message": "OOM"}]
+                                    ],
+                                },
+                            }
+                        }
+                    )
+                return super().get(url, **kwargs)
+
+        with self.assertRaises(GenerationError) as raised_error:
+            await self.wait(runner, FailingSession(ready_after_polls=1))
+
+        self.assertIn("OOM", str(raised_error.exception))
+
+    def test_saved_outputs_are_preferred_over_temp_previews(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        history_entry = {
+            "outputs": {
+                "preview_node": {
+                    "images": [{"filename": "preview_tmp.png", "subfolder": "", "type": "temp"}]
+                },
+                "save_node": {
+                    "images": [
+                        {"filename": "ComfyUI_00042_.png", "subfolder": "", "type": "output"}
+                    ]
+                },
+            }
+        }
+
+        references = runner._extract_image_references(history_entry)
+
+        self.assertEqual(
+            [(reference["filename"], reference["type"]) for reference in references],
+            [("ComfyUI_00042_.png", "output"), ("preview_tmp.png", "temp")],
+        )
+
+    def test_temp_previews_are_kept_as_a_fallback(self) -> None:
+        """A preview-only workflow must still deliver something."""
+        runner = ComfyUIWorkflowRunner()
+        history_entry = {
+            "outputs": {
+                "preview_node": {
+                    "images": [{"filename": "preview_tmp.png", "subfolder": "", "type": "temp"}]
+                }
+            }
+        }
+
+        references = runner._extract_image_references(history_entry)
+
+        self.assertEqual([reference["filename"] for reference in references], ["preview_tmp.png"])
+
+    def test_references_without_a_type_are_treated_as_saved_outputs(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        history_entry = {"outputs": {"node": {"images": [{"filename": "plain.png"}]}}}
+
+        references = runner._extract_image_references(history_entry)
+
+        self.assertEqual([reference["filename"] for reference in references], ["plain.png"])
+
+    async def test_slow_workflow_reaches_the_download_step_end_to_end(self) -> None:
+        """The user-reported scenario, end to end: image finishes past the timeout."""
+        runner = ComfyUIWorkflowRunner()
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "miaomiao文生图",
+                "supported_modes": ["text_to_image"],
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+            }
+        )
+        session = self.QueueAwareSession(ready_after_polls=6)
+
+        with TemporaryDirectory() as temporary_directory:
+            with patch.object(
+                ComfyUIWorkflowRunner,
+                "_submit_prompt",
+                new=AsyncMock(return_value=session.prompt_id),
+            ):
+                paths = await runner.generate_text_to_image(
+                    "JK",
+                    1,
+                    workflow_config,
+                    [
+                        WorkflowNodeBinding(
+                            workflow_id="miaomiao文生图",
+                            node_id="6",
+                            field_path="inputs.text",
+                            binding_type="prompt_positive",
+                        )
+                    ],
+                    WorkflowRuntimeConfig(timeout_seconds=1, poll_interval_seconds=0.4),
+                    Path(temporary_directory),
+                    session,
+                )
+
+            self.assertEqual(len(paths), 1)
+            self.assertEqual(paths[0].read_bytes(), b"png-bytes")
+
+        self.assertEqual(len(session.view_requests), 1)
+        self.assertEqual(session.view_requests[0]["filename"], "ComfyUI_00042_.png")
 
 
 class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
