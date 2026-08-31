@@ -167,7 +167,9 @@ class ModelConfig:
     seed: str = ""
     timeout_mode: str = "follow_global"
     timeout_seconds: int = -1
-    priority: int = 0
+    # Mirrors services.priority.DEFAULT_PRIORITY; kept literal so the adapters
+    # package has no import-time dependency on the services package.
+    priority: int = 1
     enabled: bool = True
     retry_mode: str = "follow_global"
     retry_count: int = -1
@@ -185,7 +187,7 @@ class ModelConfig:
     def from_template_entry(cls, entry: dict[str, Any]) -> ModelConfig:
         # Imported lazily to avoid a hard import-time dependency from the
         # adapters package onto the services package.
-        from ..services.priority import resolve_priority_value
+        from ..services.priority import DEFAULT_PRIORITY, resolve_priority_value
         from ..services.fake_forward import normalize_custom_qq, parse_entry_fake_forward_mode
         from ..services.image_pdf import parse_entry_image_to_pdf_mode
         from ..services.send_strategy import parse_entry_send_strategy
@@ -227,7 +229,7 @@ class ModelConfig:
             seed=str(entry.get("seed") or "").strip(),
             timeout_mode=timeout_mode,
             timeout_seconds=parse_int(entry.get("timeout_seconds"), -1),
-            priority=resolve_priority_value(entry, default_priority=10),
+            priority=resolve_priority_value(entry, default_priority=DEFAULT_PRIORITY),
             enabled=parse_bool(entry.get("enabled"), True),
             retry_mode=retry_mode,
             retry_count=parse_int(entry.get("retry_count"), -1),

@@ -282,16 +282,82 @@ class ComfyUIWorkflowRunner:
         headers: dict[str, str],
         image_reference: dict[str, str],
     ) -> bytes:
-        params = {
-            "filename": image_reference.get("filename", ""),
-            "subfolder": image_reference.get("subfolder", ""),
-            "type": image_reference.get("type", "output"),
-        }
-        url = f"{base_url}/view"
-        async with session.get(url, params=params, headers=headers) as resp:
-            if resp.status != 200:
-                raise GenerationError(f"ComfyUI 下载图片失败: HTTP {resp.status}")
-            return await resp.read()
+        filename = str(image_reference.get("filename") or "").strip()
+        if not filename:
+            raise GenerationError("ComfyUI 输出缺少图片文件名")
+
+        last_error = ""
+        for params, url in self._build_download_attempts(base_url, image_reference):
+            async with session.get(url, params=params, headers=headers) as resp:
+                if resp.status == 200:
+                    image_bytes = await resp.read()
+                    if image_bytes:
+                        return image_bytes
+                    last_error = "返回了空图片数据"
+                    continue
+                last_error = await self._describe_download_failure(resp)
+
+        raise GenerationError(f"ComfyUI 下载图片失败: {last_error or '未知错误'}")
+
+    @staticmethod
+    def _build_download_attempts(
+        base_url: str,
+        image_reference: dict[str, str],
+    ) -> list[tuple[dict[str, str], str]]:
+        """Build the ordered ``/view`` attempts used to fetch one finished image.
+
+        ``subfolder`` and ``type`` are only sent when non-empty. ComfyUI runs its
+        path-traversal guard whenever ``subfolder`` is *present* in the query, and
+        that guard compares ``os.path.abspath(...)`` against its raw configured
+        output dir — so an output dir written with forward slashes or a trailing
+        separator makes an empty ``subfolder=`` return HTTP 403 even though the
+        image generated fine. Omitting the empty value skips the guard entirely.
+
+        ``/api/view`` is retried afterwards because reverse proxies in front of
+        ComfyUI commonly expose only the ``/api`` prefixed routes.
+        """
+        params: dict[str, str] = {"filename": str(image_reference.get("filename") or "").strip()}
+
+        subfolder = str(image_reference.get("subfolder") or "").strip()
+        if subfolder:
+            params["subfolder"] = subfolder
+
+        image_type = str(image_reference.get("type") or "").strip()
+        if image_type:
+            params["type"] = image_type
+
+        attempts: list[tuple[dict[str, str], str]] = [
+            (params, f"{base_url}/view"),
+            (params, f"{base_url}/api/view"),
+        ]
+
+        if subfolder:
+            # Last resort for the guard above: ComfyUI reduces the filename with
+            # ``os.path.basename``, so a root-level retry can still resolve.
+            params_without_subfolder = {
+                key: value for key, value in params.items() if key != "subfolder"
+            }
+            attempts.append((params_without_subfolder, f"{base_url}/view"))
+
+        return attempts
+
+    @staticmethod
+    async def _describe_download_failure(resp: aiohttp.ClientResponse) -> str:
+        """Turn a failed ``/view`` response into an actionable message."""
+        detail = ""
+        try:
+            detail = (await resp.text())[:200].strip()
+        except Exception:
+            detail = ""
+
+        if resp.status == 403:
+            return (
+                "HTTP 403（ComfyUI 拒绝了图片下载请求，"
+                "通常是 ComfyUI 输出目录配置或反向代理限制导致，图片其实已生成）"
+            )
+        if detail:
+            return f"HTTP {resp.status}: {detail}"
+        return f"HTTP {resp.status}"
 
     @staticmethod
     def _extract_error_message(data: Any, status: int) -> str:

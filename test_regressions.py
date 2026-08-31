@@ -218,6 +218,17 @@ from astrbot_plugin_image_gateway.services.image_pdf import (  # noqa: E402
     parse_entry_image_to_pdf_mode,
     resolve_effective_image_to_pdf,
 )
+from astrbot_plugin_image_gateway.services.priority import (  # noqa: E402
+    DEFAULT_PRIORITY,
+    LEGACY_CUSTOM_PRIORITY_DEFAULT,
+    LEGACY_PRESET_PRIORITY_VALUES,
+    RANDOM_PRIORITY,
+    is_random_priority,
+    migrate_priority_entry,
+    normalize_priority_value,
+    resolve_priority_value,
+    sort_targets_by_priority,
+)
 from astrbot_plugin_image_gateway.services.send_strategy import (  # noqa: E402
     FOLLOW_GLOBAL,
     SendStrategy,
@@ -351,7 +362,9 @@ class GenerationServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
         display_name: str,
         *,
         max_generation_count: int = -1,
-        priority: int = 0,
+        # Matches the schema default. Priority 0 means "random group", which would
+        # make configured-order assertions in these tests non-deterministic.
+        priority: int = DEFAULT_PRIORITY,
     ) -> ModelConfig:
         return ModelConfig(
             provider="openai",
@@ -1136,9 +1149,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.7", metadata)
-        self.assertIn('"2.1.7",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.7"))
+        self.assertIn("version: 2.1.8", metadata)
+        self.assertIn('"2.1.8",', main_source)
+        self.assertTrue(changelog.startswith("## v2.1.8"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -2570,18 +2583,39 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertEqual(schema["image_cache_cleanup_days"]["default"], "7")
         self.assertEqual(schema["image_cache_cleanup_days"]["type"], "string")
 
-    def test_conf_schema_documents_priority_preset_numeric_values(self) -> None:
+    def test_conf_schema_exposes_priority_as_plain_number_box(self) -> None:
+        """v2.1.8 removed the priority radio; only the numeric field remains."""
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
 
-        model_priority_hint = schema["models"]["templates"]["openai"]["items"]["priority"]["hint"]
-        workflow_priority_hint = schema["workflows"]["templates"]["comfyui"]["items"]["priority"]["hint"]
+        template_groups = (
+            ("models", ("openai", "gemini", "dashscope", "volcengine", "minimax", "zhipu", "hunyuan")),
+            ("workflows", ("comfyui", "a1111")),
+        )
 
-        for hint in (model_priority_hint, workflow_priority_hint):
-            self.assertIn("最高=40", hint)
-            self.assertIn("高=30", hint)
-            self.assertIn("普通=20", hint)
-            self.assertIn("低=10", hint)
-            self.assertIn("最低=0", hint)
+        checked_template_count = 0
+        for list_key, template_keys in template_groups:
+            for template_key in template_keys:
+                items = schema[list_key]["templates"][template_key]["items"]
+                priority_item = items["priority"]
+
+                self.assertNotIn("priority_preset", items)
+                self.assertEqual(priority_item["type"], "int")
+                self.assertEqual(priority_item["default"], DEFAULT_PRIORITY)
+                self.assertEqual(priority_item["default"], 1)
+                self.assertEqual(priority_item["description"], "优先级")
+                # The number box must not be gated behind the removed radio.
+                self.assertNotIn("condition", priority_item)
+                self.assertNotIn("options", priority_item)
+                self.assertNotIn("labels", priority_item)
+                self.assertIn("数值越大越优先", priority_item["hint"])
+                self.assertIn("随机优先级", priority_item["hint"])
+                checked_template_count += 1
+
+        self.assertEqual(checked_template_count, 9)
+        self.assertNotIn(
+            "priority_preset",
+            (repository_root / "_conf_schema.json").read_text(encoding="utf-8"),
+        )
 
     def test_conf_schema_fixed_message_default_matches_code_default(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -3219,12 +3253,295 @@ class ComfyUIWorkflowRunnerRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(prompt_payload["31"]["inputs"]["latent_image"], ["225", 0])
         self.assertEqual(prompt_payload["31"]["inputs"]["denoise"], 0.45)
 
+
+class ComfyUIImageDownloadRegressionTests(unittest.IsolatedAsyncioTestCase):
+    """v2.1.8 issue 3: a generated image reported ``下载图片失败: HTTP 403``.
+
+    ComfyUI's ``/view`` handler runs its path-traversal guard whenever ``subfolder``
+    is present in the query, comparing ``os.path.abspath(join(output_dir, subfolder))``
+    against its raw configured output dir. An output dir written with forward slashes
+    or a trailing separator makes that comparison fail, so sending ``subfolder=``
+    (empty) returned 403 even though the image had been written to disk.
+    """
+
+    class RecordingResponse:
+        def __init__(self, *, status: int = 200, body: bytes = b"", text: str = ""):
+            self.status = status
+            self._body = body
+            self._text = text
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def read(self):
+            return self._body
+
+        async def text(self):
+            return self._text
+
+    class RecordingSession:
+        def __init__(self, *, forbid_subfolder: bool = False, forbid_bare_view: bool = False):
+            self.forbid_subfolder = forbid_subfolder
+            self.forbid_bare_view = forbid_bare_view
+            self.requests: list[tuple[str, dict[str, str]]] = []
+
+        def get(self, url: str, **kwargs):
+            params = dict(kwargs.get("params") or {})
+            self.requests.append((url, params))
+
+            response_class = ComfyUIImageDownloadRegressionTests.RecordingResponse
+            if self.forbid_subfolder and "subfolder" in params:
+                return response_class(status=403, text="")
+            if self.forbid_bare_view and url.endswith("/view") and "/api/" not in url:
+                return response_class(status=403, text="")
+            return response_class(body=b"image-bytes")
+
+    def build_reference(self, **overrides: str) -> dict[str, str]:
+        reference = {"filename": "out.png", "subfolder": "", "type": "output"}
+        reference.update(overrides)
+        return reference
+
+    async def test_empty_subfolder_is_omitted_from_the_view_query(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        session = self.RecordingSession(forbid_subfolder=True)
+
+        image_bytes = await runner._download_image(
+            session,
+            "http://127.0.0.1:8188",
+            {},
+            self.build_reference(),
+        )
+
+        self.assertEqual(image_bytes, b"image-bytes")
+        self.assertEqual(len(session.requests), 1)
+        url, params = session.requests[0]
+        self.assertEqual(url, "http://127.0.0.1:8188/view")
+        self.assertEqual(params, {"filename": "out.png", "type": "output"})
+        self.assertNotIn("subfolder", params)
+
+    async def test_non_empty_subfolder_is_still_sent(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        session = self.RecordingSession()
+
+        await runner._download_image(
+            session,
+            "http://127.0.0.1:8188",
+            {},
+            self.build_reference(subfolder="dated/2026-08-31"),
+        )
+
+        _url, params = session.requests[0]
+        self.assertEqual(params["subfolder"], "dated/2026-08-31")
+
+    async def test_empty_type_is_omitted_so_comfyui_applies_its_own_default(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        session = self.RecordingSession()
+
+        await runner._download_image(
+            session,
+            "http://127.0.0.1:8188",
+            {},
+            {"filename": "out.png"},
+        )
+
+        _url, params = session.requests[0]
+        self.assertEqual(params, {"filename": "out.png"})
+
+    async def test_download_falls_back_to_api_view_prefix(self) -> None:
+        """Reverse proxies in front of ComfyUI often expose only /api routes."""
+        runner = ComfyUIWorkflowRunner()
+        session = self.RecordingSession(forbid_bare_view=True)
+
+        image_bytes = await runner._download_image(
+            session,
+            "http://127.0.0.1:8188",
+            {},
+            self.build_reference(),
+        )
+
+        self.assertEqual(image_bytes, b"image-bytes")
+        self.assertEqual(
+            [url for url, _params in session.requests],
+            ["http://127.0.0.1:8188/view", "http://127.0.0.1:8188/api/view"],
+        )
+
+    async def test_forbidden_subfolder_retries_without_subfolder(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        session = self.RecordingSession(forbid_subfolder=True)
+
+        image_bytes = await runner._download_image(
+            session,
+            "http://127.0.0.1:8188",
+            {},
+            self.build_reference(subfolder="nested"),
+        )
+
+        self.assertEqual(image_bytes, b"image-bytes")
+        self.assertEqual(len(session.requests), 3)
+        self.assertNotIn("subfolder", session.requests[-1][1])
+
+    async def test_persistent_403_reports_actionable_message(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+
+        class AlwaysForbiddenSession(self.RecordingSession):
+            def get(self, url: str, **kwargs):
+                self.requests.append((url, dict(kwargs.get("params") or {})))
+                return ComfyUIImageDownloadRegressionTests.RecordingResponse(status=403)
+
+        forbidden_session = AlwaysForbiddenSession()
+        with self.assertRaises(GenerationError) as raised_error:
+            await runner._download_image(
+                forbidden_session,
+                "http://127.0.0.1:8188",
+                {},
+                self.build_reference(),
+            )
+
+        message = str(raised_error.exception)
+        self.assertIn("ComfyUI 下载图片失败", message)
+        self.assertIn("403", message)
+        self.assertIn("图片其实已生成", message)
+        self.assertEqual(len(forbidden_session.requests), 2)
+
+    async def test_empty_body_is_treated_as_a_failure(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+
+        class EmptyBodySession(self.RecordingSession):
+            def get(self, url: str, **kwargs):
+                self.requests.append((url, dict(kwargs.get("params") or {})))
+                return ComfyUIImageDownloadRegressionTests.RecordingResponse(body=b"")
+
+        session = EmptyBodySession()
+        with self.assertRaises(GenerationError) as raised_error:
+            await runner._download_image(
+                session,
+                "http://127.0.0.1:8188",
+                {},
+                self.build_reference(),
+            )
+
+        self.assertIn("空图片数据", str(raised_error.exception))
+
+    async def test_missing_filename_fails_fast_without_requests(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+        session = self.RecordingSession()
+
+        with self.assertRaises(GenerationError) as raised_error:
+            await runner._download_image(session, "http://127.0.0.1:8188", {}, {"filename": "  "})
+
+        self.assertIn("缺少图片文件名", str(raised_error.exception))
+        self.assertEqual(session.requests, [])
+
+    async def test_non_403_failure_includes_response_detail(self) -> None:
+        runner = ComfyUIWorkflowRunner()
+
+        class ServerErrorSession(self.RecordingSession):
+            def get(self, url: str, **kwargs):
+                self.requests.append((url, dict(kwargs.get("params") or {})))
+                return ComfyUIImageDownloadRegressionTests.RecordingResponse(
+                    status=500,
+                    text="internal boom",
+                )
+
+        with self.assertRaises(GenerationError) as raised_error:
+            await runner._download_image(
+                ServerErrorSession(),
+                "http://127.0.0.1:8188",
+                {},
+                self.build_reference(),
+            )
+
+        message = str(raised_error.exception)
+        self.assertIn("HTTP 500", message)
+        self.assertIn("internal boom", message)
+
+    async def test_generated_workflow_image_survives_forbidden_empty_subfolder(self) -> None:
+        """End-to-end: the historical failure path now saves the image instead of erroring."""
+        runner = ComfyUIWorkflowRunner()
+        workflow_config = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "miaomiao文生图",
+                "supported_modes": ["text_to_image"],
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+            }
+        )
+
+        class EndToEndSession:
+            def __init__(self):
+                self.view_requests: list[dict[str, str]] = []
+
+            def post(self, url: str, **kwargs):
+                return ComfyUIImageDownloadRegressionTests.RecordingResponse(body=b"")
+
+            def get(self, url: str, **kwargs):
+                params = dict(kwargs.get("params") or {})
+                if "/history/" in url:
+                    return ComfyUIWorkflowRunnerRegressionTests.FakeResponse(
+                        json_data={
+                            "prompt-403": {
+                                "outputs": {
+                                    "save": {
+                                        "images": [
+                                            {
+                                                "filename": "out.png",
+                                                "subfolder": "",
+                                                "type": "output",
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    )
+                self.view_requests.append(params)
+                if "subfolder" in params:
+                    return ComfyUIImageDownloadRegressionTests.RecordingResponse(status=403)
+                return ComfyUIImageDownloadRegressionTests.RecordingResponse(body=b"png-bytes")
+
+        session = EndToEndSession()
+        with TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            with patch.object(
+                ComfyUIWorkflowRunner,
+                "_submit_prompt",
+                new=AsyncMock(return_value="prompt-403"),
+            ):
+                paths = await runner.generate_text_to_image(
+                    "JK",
+                    1,
+                    workflow_config,
+                    [
+                        WorkflowNodeBinding(
+                            workflow_id="miaomiao文生图",
+                            node_id="6",
+                            field_path="inputs.text",
+                            binding_type="prompt_positive",
+                        )
+                    ],
+                    WorkflowRuntimeConfig(),
+                    output_dir,
+                    session,
+                )
+
+            self.assertEqual(len(paths), 1)
+            self.assertTrue(paths[0].is_file())
+            self.assertEqual(paths[0].read_bytes(), b"png-bytes")
+
+        self.assertEqual(len(session.view_requests), 1)
+        self.assertNotIn("subfolder", session.view_requests[0])
+
+
 class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
     def build_workflow(
         self,
         display_name: str,
         *,
-        priority: int = 0,
+        # Priority 0 is the random group, so these helpers default to the schema
+        # default instead, keeping configured-order assertions deterministic.
+        priority: int = DEFAULT_PRIORITY,
         supported_modes: list[str] | None = None,
     ) -> WorkflowConfig:
         return WorkflowConfig.from_template_entry(
@@ -3240,7 +3557,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self,
         display_name: str,
         *,
-        priority: int = 0,
+        priority: int = DEFAULT_PRIORITY,
         max_generation_count: int = -1,
         supported_modes: list[str] | None = None,
     ) -> ModelConfig:
@@ -3601,6 +3918,416 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(service.workflow_node_bindings), 1)
 
 
+class PriorityResolutionRegressionTests(unittest.TestCase):
+    """v2.1.8: one numeric priority scale shared by models and workflows."""
+
+    def test_numeric_priority_is_read_directly_from_the_entry(self) -> None:
+        model = ModelConfig.from_template_entry({"provider": "openai", "priority": 30})
+        workflow = WorkflowConfig.from_template_entry(
+            {"workflow_id": "wf", "priority": 30, "workflow_content": "{}"}
+        )
+
+        self.assertEqual(model.priority, 30)
+        self.assertEqual(workflow.priority, 30)
+
+    def test_numeric_priority_wins_over_stale_priority_preset(self) -> None:
+        """The v2.1.7 bug: a filled number box was ignored because the preset stayed "normal"."""
+        model = ModelConfig.from_template_entry(
+            {"provider": "openai", "priority_preset": "normal", "priority": 10}
+        )
+        workflow = WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": "wf",
+                "priority_preset": "normal",
+                "priority": 30,
+                "workflow_content": "{}",
+            }
+        )
+
+        self.assertEqual(model.priority, 10)
+        self.assertEqual(workflow.priority, 30)
+        self.assertGreater(workflow.priority, model.priority)
+
+    def test_missing_priority_falls_back_to_legacy_preset_then_default(self) -> None:
+        for preset, expected_priority in LEGACY_PRESET_PRIORITY_VALUES.items():
+            with self.subTest(preset=preset):
+                model = ModelConfig.from_template_entry(
+                    {"provider": "openai", "priority_preset": preset}
+                )
+                self.assertEqual(model.priority, expected_priority)
+
+        self.assertEqual(
+            ModelConfig.from_template_entry({"provider": "openai"}).priority,
+            DEFAULT_PRIORITY,
+        )
+
+    def test_legacy_presets_keep_their_documented_relative_order(self) -> None:
+        ordered_presets = ["highest", "high", "normal", "low", "lowest"]
+        values = [LEGACY_PRESET_PRIORITY_VALUES[preset] for preset in ordered_presets]
+
+        self.assertEqual(values, sorted(values, reverse=True))
+        # "lowest" must stay ranked, never fall into the random group.
+        self.assertFalse(is_random_priority(LEGACY_PRESET_PRIORITY_VALUES["lowest"]))
+
+    def test_negative_and_invalid_priorities_clamp_to_random(self) -> None:
+        self.assertEqual(normalize_priority_value(-5), RANDOM_PRIORITY)
+        self.assertEqual(normalize_priority_value(0), RANDOM_PRIORITY)
+        self.assertEqual(normalize_priority_value("invalid"), DEFAULT_PRIORITY)
+        self.assertEqual(resolve_priority_value({"priority": -3}), RANDOM_PRIORITY)
+        self.assertTrue(is_random_priority(RANDOM_PRIORITY))
+        self.assertFalse(is_random_priority(DEFAULT_PRIORITY))
+
+    def test_sort_targets_orders_workflow_above_lower_priority_model(self) -> None:
+        low_priority_model = ModelConfig(
+            provider="openai",
+            display_name="API-Low",
+            url="u",
+            apikey="k",
+            model_name="m",
+            priority=1,
+        )
+        high_priority_workflow = WorkflowConfig(
+            workflow_id="WF-High",
+            display_name="WF-High",
+            workflow_content_raw="{}",
+            priority=9,
+        )
+
+        # Models are appended before workflows, so the workflow must be promoted.
+        ordered_targets = sort_targets_by_priority([low_priority_model, high_priority_workflow])
+
+        self.assertEqual(
+            [target.display_name for target in ordered_targets],
+            ["WF-High", "API-Low"],
+        )
+
+    def test_sort_targets_places_random_group_after_ranked_entries(self) -> None:
+        ranked_target = ModelConfig(
+            provider="openai",
+            display_name="Ranked",
+            url="u",
+            apikey="k",
+            model_name="m",
+            priority=1,
+        )
+        random_targets = [
+            ModelConfig(
+                provider="openai",
+                display_name=f"Random{index}",
+                url="u",
+                apikey="k",
+                model_name="m",
+                priority=RANDOM_PRIORITY,
+            )
+            for index in range(3)
+        ]
+
+        ordered_targets = sort_targets_by_priority([*random_targets, ranked_target])
+
+        self.assertEqual(ordered_targets[0].display_name, "Ranked")
+        self.assertEqual(
+            sorted(target.display_name for target in ordered_targets[1:]),
+            ["Random0", "Random1", "Random2"],
+        )
+
+    def test_sort_targets_shuffles_random_group_when_randomize_requested(self) -> None:
+        random_targets = [
+            ModelConfig(
+                provider="openai",
+                display_name=f"Random{index}",
+                url="u",
+                apikey="k",
+                model_name="m",
+                priority=RANDOM_PRIORITY,
+            )
+            for index in range(6)
+        ]
+
+        observed_orders = {
+            tuple(
+                target.display_name
+                for target in sort_targets_by_priority(random_targets, randomize=True)
+            )
+            for _attempt in range(60)
+        }
+
+        self.assertGreater(len(observed_orders), 1)
+        for order in observed_orders:
+            self.assertEqual(sorted(order), [f"Random{index}" for index in range(6)])
+
+    def test_sort_targets_is_stable_for_equal_priorities_without_randomize(self) -> None:
+        targets = [
+            ModelConfig(
+                provider="openai",
+                display_name=f"Model{index}",
+                url="u",
+                apikey="k",
+                model_name="m",
+                priority=5,
+            )
+            for index in range(4)
+        ]
+
+        for _attempt in range(5):
+            self.assertEqual(
+                [target.display_name for target in sort_targets_by_priority(targets)],
+                ["Model0", "Model1", "Model2", "Model3"],
+            )
+
+    def test_migrate_priority_entry_folds_preset_into_number(self) -> None:
+        # Preset chosen, number box left at its old default -> preset wins.
+        preset_entry = {
+            "display_name": "M",
+            "priority_preset": "high",
+            "priority": LEGACY_CUSTOM_PRIORITY_DEFAULT,
+        }
+        self.assertTrue(migrate_priority_entry(preset_entry))
+        self.assertNotIn("priority_preset", preset_entry)
+        self.assertEqual(preset_entry["priority"], LEGACY_PRESET_PRIORITY_VALUES["high"])
+
+        custom_entry = {"display_name": "M", "priority_preset": "custom", "priority": 35}
+        self.assertTrue(migrate_priority_entry(custom_entry))
+        self.assertNotIn("priority_preset", custom_entry)
+        self.assertEqual(custom_entry["priority"], 35)
+
+        already_migrated_entry = {"display_name": "M", "priority": 7}
+        self.assertFalse(migrate_priority_entry(already_migrated_entry))
+        self.assertEqual(already_migrated_entry, {"display_name": "M", "priority": 7})
+
+    def test_migrate_priority_entry_keeps_number_the_user_typed_under_a_preset(self) -> None:
+        """The number box was hidden behind the radio, so a non-default value is intentional."""
+        typed_entry = {"display_name": "M", "priority_preset": "normal", "priority": 3}
+
+        self.assertTrue(migrate_priority_entry(typed_entry))
+
+        self.assertNotIn("priority_preset", typed_entry)
+        self.assertEqual(typed_entry["priority"], 3)
+        self.assertNotEqual(typed_entry["priority"], LEGACY_PRESET_PRIORITY_VALUES["normal"])
+
+    def test_migrate_priority_entry_maps_preset_when_no_number_stored(self) -> None:
+        entry = {"display_name": "M", "priority_preset": "lowest"}
+
+        self.assertTrue(migrate_priority_entry(entry))
+
+        self.assertEqual(entry["priority"], LEGACY_PRESET_PRIORITY_VALUES["lowest"])
+        self.assertFalse(is_random_priority(entry["priority"]))
+
+    def test_migrate_priority_entry_ignores_non_dict_entries(self) -> None:
+        self.assertFalse(migrate_priority_entry("not-a-dict"))  # type: ignore[arg-type]
+
+    def test_migrate_priority_entry_fills_missing_priority(self) -> None:
+        entry: dict[str, Any] = {"display_name": "M"}
+        self.assertTrue(migrate_priority_entry(entry))
+        self.assertEqual(entry["priority"], DEFAULT_PRIORITY)
+        self.assertFalse(migrate_priority_entry(entry))
+
+
+class PriorityConfigMigrationRegressionTests(unittest.TestCase):
+    def build_plugin(self, config: dict[str, Any]) -> ImageGatewayPlugin:
+        plugin_instance = object.__new__(ImageGatewayPlugin)
+        plugin_instance.config = config
+        plugin_instance.plugin_config = config
+        return plugin_instance
+
+    def test_normalize_plugin_config_migrates_presets_and_persists_once(self) -> None:
+        config = {
+            "models": [
+                {"display_name": "API-Low", "priority_preset": "low", "priority": 10},
+                {"display_name": "API-Typed", "priority_preset": "normal", "priority": 3},
+            ],
+            "workflows": [
+                {"workflow_id": "WF-High", "priority_preset": "high", "priority": 10},
+            ],
+        }
+        plugin_instance = self.build_plugin(config)
+        persisted_calls: list[int] = []
+        plugin_instance._persist_plugin_config = lambda: persisted_calls.append(1)
+
+        plugin_instance._normalize_plugin_config()
+
+        self.assertEqual(len(persisted_calls), 1)
+        for entry in [*config["models"], *config["workflows"]]:
+            self.assertNotIn("priority_preset", entry)
+        self.assertEqual(config["models"][0]["priority"], LEGACY_PRESET_PRIORITY_VALUES["low"])
+        self.assertEqual(config["models"][1]["priority"], 3)
+        self.assertEqual(config["workflows"][0]["priority"], LEGACY_PRESET_PRIORITY_VALUES["high"])
+
+        # Second pass is a no-op: nothing left to migrate, nothing re-persisted.
+        plugin_instance._normalize_plugin_config()
+        self.assertEqual(len(persisted_calls), 1)
+
+    def test_migrated_config_schedules_high_priority_workflow_first(self) -> None:
+        config = {
+            "models": [
+                {
+                    "__template_key": "openai",
+                    "display_name": "API-Low",
+                    "priority_preset": "normal",
+                    "priority": 1,
+                    "url": "https://example.com/v1",
+                    "apikey": "k",
+                    "model_name": "m",
+                }
+            ],
+            "workflows": [
+                {
+                    "workflow_id": "WF-High",
+                    "priority_preset": "normal",
+                    "priority": 9,
+                    "workflow_content": json.dumps({"6": {"inputs": {"text": "x"}}}),
+                }
+            ],
+        }
+        plugin_instance = self.build_plugin(config)
+        plugin_instance._persist_plugin_config = lambda: None
+        plugin_instance._normalize_plugin_config()
+
+        service = GenerationService.from_config(config, Path("."), FakeCounter())
+
+        self.assertEqual(
+            [target.display_name for target in service.targets],
+            ["WF-High", "API-Low"],
+        )
+        self.assertEqual(
+            [target.display_name for target in service._select_targets(None)],
+            ["WF-High", "API-Low"],
+        )
+
+
+class PrioritySchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
+    def build_model(self, display_name: str, *, priority: int) -> ModelConfig:
+        return ModelConfig(
+            provider="openai",
+            display_name=display_name,
+            url="https://example.com/v1",
+            apikey="test-key",
+            model_name="test-model",
+            priority=priority,
+            supported_modes=["text_to_image", "image_to_image"],
+        )
+
+    def build_workflow(self, display_name: str, *, priority: int) -> WorkflowConfig:
+        return WorkflowConfig.from_template_entry(
+            {
+                "workflow_id": display_name,
+                "priority": priority,
+                "supported_modes": ["text_to_image"],
+                "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
+            }
+        )
+
+    def build_service(self, targets: list[Any]) -> GenerationService:
+        return GenerationService(
+            targets,
+            [
+                WorkflowNodeBinding(
+                    workflow_id=target.display_name,
+                    node_id="6",
+                    field_path="inputs.text",
+                    binding_type="prompt_positive",
+                )
+                for target in targets
+                if isinstance(target, WorkflowConfig)
+            ],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=FakeCounter(),
+        )
+
+    async def run_generation(self, service: GenerationService) -> str:
+        async def fake_workflow_generate(
+            self,
+            prompt,
+            count,
+            workflow_config,
+            node_bindings,
+            runtime_config,
+            output_dir,
+            session,
+        ):
+            return [Path(f"{workflow_config.display_name}.png")]
+
+        async def fake_adapter_generate(_prompt, _count, target, _output_dir, _session):
+            return [Path(f"{target.display_name}.png")]
+
+        adapter = types.SimpleNamespace(
+            text_to_image=fake_adapter_generate,
+            image_to_image=fake_adapter_generate,
+        )
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.ComfyUIWorkflowRunner.generate_text_to_image",
+                fake_workflow_generate,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.get_adapter",
+                return_value=adapter,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            _paths, target_name, _strategy, _fake_forward = await service.generate(
+                mode="text_to_image", prompt="测试"
+            )
+        return target_name
+
+    async def test_high_priority_workflow_beats_low_priority_api_model(self) -> None:
+        """Issue 1: a high-priority workflow must win even though models are added first."""
+        service = self.build_service(
+            [
+                self.build_model("API-Low", priority=1),
+                self.build_workflow("WF-High", priority=9),
+            ]
+        )
+
+        self.assertEqual(await self.run_generation(service), "WF-High")
+
+    async def test_high_priority_api_model_beats_low_priority_workflow(self) -> None:
+        service = self.build_service(
+            [
+                self.build_workflow("WF-Low", priority=1),
+                self.build_model("API-High", priority=9),
+            ]
+        )
+
+        self.assertEqual(await self.run_generation(service), "API-High")
+
+    async def test_priority_wins_regardless_of_configured_order(self) -> None:
+        for targets in (
+            [self.build_workflow("WF-High", priority=20), self.build_model("API-Low", priority=2)],
+            [self.build_model("API-Low", priority=2), self.build_workflow("WF-High", priority=20)],
+        ):
+            with self.subTest(order=[target.display_name for target in targets]):
+                self.assertEqual(await self.run_generation(self.build_service(targets)), "WF-High")
+
+    async def test_zero_priority_entries_are_selected_randomly(self) -> None:
+        selected_names: set[str] = set()
+        for _attempt in range(60):
+            service = self.build_service(
+                [
+                    self.build_model("API-Random", priority=RANDOM_PRIORITY),
+                    self.build_workflow("WF-Random", priority=RANDOM_PRIORITY),
+                ]
+            )
+            selected_names.add(await self.run_generation(service))
+
+        self.assertEqual(selected_names, {"API-Random", "WF-Random"})
+
+    async def test_ranked_entry_always_precedes_zero_priority_entries(self) -> None:
+        for _attempt in range(20):
+            service = self.build_service(
+                [
+                    self.build_model("API-Random", priority=RANDOM_PRIORITY),
+                    self.build_workflow("WF-Ranked", priority=1),
+                ]
+            )
+            self.assertEqual(await self.run_generation(service), "WF-Ranked")
+
+
 class ProviderAdapterRegressionTests(unittest.TestCase):
     def test_get_adapter_supports_new_providers(self) -> None:
         self.assertIsInstance(get_adapter("dashscope"), DashScopeAdapter)
@@ -3657,7 +4384,7 @@ class ProviderAdapterAsyncRegressionTests(unittest.IsolatedAsyncioTestCase):
             return self._json_data
 
     class FakeSession:
-        def __init__(self, responses: list[FakeResponse]):
+        def __init__(self, responses: list[ProviderAdapterAsyncRegressionTests.FakeResponse]):
             self._responses = list(responses)
             self.post_urls: list[str] = []
             self.get_urls: list[str] = []
@@ -3961,9 +4688,9 @@ class InputValidationRegressionTests(unittest.TestCase):
         )
 
         self.assertFalse(model.enabled)
-        self.assertEqual((model.retry_count, model.max_generation_count, model.priority), (-1, -1, 10))
+        self.assertEqual((model.retry_count, model.max_generation_count, model.priority), (-1, -1, 1))
         self.assertFalse(workflow.enabled)
-        self.assertEqual((workflow.retry_count, workflow.max_generation_count, workflow.priority), (-1, -1, 10))
+        self.assertEqual((workflow.retry_count, workflow.max_generation_count, workflow.priority), (-1, -1, 1))
         self.assertEqual((runtime.poll_interval_seconds, runtime.timeout_seconds), (1.0, 300))
         self.assertEqual((service.global_retry_count, service.global_max_generation_count), (2, 2))
 

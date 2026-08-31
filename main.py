@@ -22,6 +22,7 @@ from .services.fake_forward import FakeForwardConfig, FakeForwardMode, parse_glo
 from .services.generation import GenerationService
 from .services.image_cache import cleanup_expired_image_cache, parse_image_cache_cleanup_days
 from .services.image_pdf import ImagePdfConfig, convert_images_to_pdf
+from .services.priority import migrate_priority_entry
 from .services.send_strategy import SendStrategy, get_sender_order, parse_global_send_strategy
 from .utils.commands import (
     parse_dedicated_command_text,
@@ -124,7 +125,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.1.7",
+    "2.1.8",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -158,8 +159,32 @@ class ImageGatewayPlugin(Star):
                     entry.pop("display_summary", None)
                     changed = True
 
+        if self._migrate_priority_config():
+            changed = True
+
         if changed:
             self._persist_plugin_config()
+
+    def _migrate_priority_config(self) -> bool:
+        """Fold the removed ``priority_preset`` radio into the numeric priority.
+
+        v2.1.8 replaced the preset radio with a single number box. Rewriting the
+        stored entries once keeps saved configs on one comparable scale, so a
+        high-priority workflow can no longer lose to a low-priority API model.
+        """
+        changed = False
+        for config_key in ("models", "workflows"):
+            raw_entries = self.plugin_config.get(config_key)
+            if not isinstance(raw_entries, list):
+                continue
+            for entry in raw_entries:
+                if isinstance(entry, dict) and migrate_priority_entry(entry):
+                    changed = True
+
+        if changed:
+            logger.info("优先级配置已迁移为纯数值形式（数值越大越优先，0 为随机优先级）")
+        return changed
+
     def _persist_plugin_config(self) -> None:
         save_config = getattr(self.config, "save_config", None)
         if callable(save_config):

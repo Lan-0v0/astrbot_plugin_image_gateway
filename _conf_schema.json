@@ -53,36 +53,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "hint": "推荐优先使用预设。条目很多时，只需给重要模型选“最高/高/普通/低/最低”，无需一个个手填数字；只有非常特殊的排序需求才使用“自定义数值”",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
-            "hint": "仅在“优先级”选择“自定义数值”时使用；数值越大越优先。预设数值对应关系为：最高=40，高=30，普通=20，低=10，最低=0。你可以参考这些数值填写自定义优先级，例如填 25 表示介于“高”和“普通”之间",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "url": {
             "description": "API 地址",
@@ -316,36 +291,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "hint": "推荐优先使用预设。条目很多时，只需给重要模型选“最高/高/普通/低/最低”，无需一个个手填数字；只有非常特殊的排序需求才使用“自定义数值”",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
-            "hint": "仅在“优先级”选择“自定义数值”时使用；数值越大越优先。预设数值对应关系为：最高=40，高=30，普通=20，低=10，最低=0。你可以参考这些数值填写自定义优先级，例如填 25 表示介于“高”和“普通”之间",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "url": {
             "description": "API 地址",
@@ -581,36 +531,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "hint": "推荐优先使用预设。条目很多时，只需给重要模型选“最高/高/普通/低/最低”，无需一个个手填数字；只有非常特殊的排序需求才使用“自定义数值”",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
-            "hint": "仅在“优先级”选择“自定义数值”时使用；数值越大越优先",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "url": {
             "description": "API 地址",
@@ -870,34 +795,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "url": {
             "description": "API 地址",
@@ -1122,34 +1024,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "url": {
             "description": "API 地址",
@@ -1385,34 +1264,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "url": {
             "description": "API 地址",
@@ -1623,34 +1479,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "url": {
             "description": "API 地址",
@@ -1907,36 +1740,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "hint": "推荐优先使用预设。条目很多时，只需给重要工作流选“最高/高/普通/低/最低”，无需一个个手填数字；只有非常特殊的排序需求才使用“自定义数值”",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
-            "hint": "仅在“优先级”选择“自定义数值”时使用；数值越大越优先。预设数值对应关系为：最高=40，高=30，普通=20，低=10，最低=0。你可以参考这些数值填写自定义优先级，例如填 25 表示介于“高”和“普通”之间",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "supported_modes": {
             "description": "支持模式",
@@ -2126,34 +1934,11 @@
             "type": "bool",
             "default": true
           },
-          "priority_preset": {
-            "description": "优先级",
-            "type": "string",
-            "default": "normal",
-            "options": [
-              "highest",
-              "high",
-              "normal",
-              "low",
-              "lowest",
-              "custom"
-            ],
-            "labels": [
-              "最高",
-              "高",
-              "普通",
-              "低",
-              "最低",
-              "自定义数值"
-            ]
-          },
           "priority": {
-            "description": "自定义优先级数值",
+            "description": "优先级",
+            "hint": "数值越大越优先。模型与工作流共用同一套优先级排序，会按数值从大到小依次尝试，失败或达上限时回退到下一个条目。填 0 表示随机优先级：所有填 0 的条目会排在有优先级的条目之后，并在每次请求时随机排序。",
             "type": "int",
-            "default": 10,
-            "condition": {
-              "priority_preset": "custom"
-            }
+            "default": 1
           },
           "supported_modes": {
             "description": "支持模式",

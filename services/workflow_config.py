@@ -14,7 +14,7 @@ from ..utils.config import (
 )
 from .fake_forward import normalize_custom_qq, parse_entry_fake_forward_mode
 from .image_pdf import parse_entry_image_to_pdf_mode
-from .priority import resolve_priority_value
+from .priority import DEFAULT_PRIORITY, resolve_priority_value
 from .send_strategy import parse_entry_send_strategy
 
 SUPPORTED_BINDING_TYPES = {
@@ -142,7 +142,7 @@ class WorkflowConfig:
     workflow_id: str
     display_name: str
     workflow_content_raw: str
-    priority: int = 0
+    priority: int = DEFAULT_PRIORITY
     enabled: bool = True
     retry_mode: str = "follow_global"
     retry_count: int = -1
@@ -192,7 +192,7 @@ class WorkflowConfig:
             workflow_id=workflow_id,
             display_name=display_name,
             workflow_content_raw=str(entry.get("workflow_content") or ""),
-            priority=resolve_priority_value(entry, default_priority=10),
+            priority=resolve_priority_value(entry, default_priority=DEFAULT_PRIORITY),
             enabled=parse_bool(entry.get("enabled"), True),
             retry_mode=retry_mode,
             retry_count=parse_int(entry.get("retry_count"), -1),

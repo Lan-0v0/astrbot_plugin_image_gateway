@@ -17,6 +17,7 @@ from .image_pdf import (
     parse_global_image_to_pdf,
     resolve_effective_image_to_pdf,
 )
+from .priority import sort_targets_by_priority
 from .send_strategy import (
     DEFAULT_GLOBAL_SEND_STRATEGY,
     SendStrategy,
@@ -105,8 +106,9 @@ class GenerationService:
                 if isinstance(entry, dict):
                     workflow_node_bindings.append(WorkflowNodeBinding.from_template_entry(entry))
 
-        enabled_targets = [target for target in targets if target.enabled]
-        enabled_targets.sort(key=lambda item: item.priority, reverse=True)
+        enabled_targets = sort_targets_by_priority(
+            [target for target in targets if target.enabled]
+        )
 
         return cls(
             enabled_targets,
@@ -357,6 +359,12 @@ class GenerationService:
         raise GenerationError("超出生成张数上限")
 
     def _select_targets(self, dedicated_command: str | None) -> list[GenerationTarget]:
+        """Resolve the candidate chain for a request, ordered by priority.
+
+        Sorting happens per request rather than only at construction time so the
+        priority number is always authoritative — models and workflows share one
+        pool — and so entries at priority 0 get reshuffled on every request.
+        """
         if dedicated_command:
             targets = [
                 target
@@ -365,8 +373,11 @@ class GenerationService:
             ]
             if not targets:
                 raise GenerationError(f"未找到专属指令 /{dedicated_command} 对应的图像目标")
-            return targets
-        return [target for target in self.targets if not target.dedicated_command]
+            return sort_targets_by_priority(targets, randomize=True)
+        return sort_targets_by_priority(
+            [target for target in self.targets if not target.dedicated_command],
+            randomize=True,
+        )
 
     @staticmethod
     def _normalize_requested_count(mode: Mode, count: int) -> int:
