@@ -136,7 +136,7 @@ class GenerationService:
         dedicated_command: str | None = None,
         size_override: str | None = None,
     ) -> GenerationResult:
-        targets = self._select_targets(dedicated_command)
+        targets = self._select_targets(dedicated_command, mode=mode)
         requested_count = self._normalize_requested_count(mode, count)
         self.validate_request_count(
             requested_count, mode=mode, dedicated_command=dedicated_command
@@ -234,7 +234,8 @@ class GenerationService:
 
         if targets and mode_unsupported_target_count == len(targets):
             raise GenerationError(
-                f"已启用的工作流暂不支持{describe_mode(mode)}，请配置支持对应模式的模型或工作流"
+                f"已启用的模型与工作流均不支持{describe_mode(mode)}，"
+                f"请在配置面板检查条目的「支持模式」与启用状态"
             )
 
         brief = execution_errors[-1] if execution_errors else "所有模型均生成失败"
@@ -340,7 +341,7 @@ class GenerationService:
         mode: Mode = "text_to_image",
         dedicated_command: str | None = None,
     ) -> None:
-        targets = self._select_targets(dedicated_command)
+        targets = self._select_targets(dedicated_command, mode=mode)
         if not targets:
             raise GenerationError("默认指令没有可用的图像目标")
 
@@ -358,12 +359,21 @@ class GenerationService:
 
         raise GenerationError("超出生成张数上限")
 
-    def _select_targets(self, dedicated_command: str | None) -> list[GenerationTarget]:
+    def _select_targets(
+        self,
+        dedicated_command: str | None,
+        mode: Mode | None = None,
+    ) -> list[GenerationTarget]:
         """Resolve the candidate chain for a request, ordered by priority.
 
         Sorting happens per request rather than only at construction time so the
         priority number is always authoritative — models and workflows share one
         pool — and so entries at priority 0 get reshuffled on every request.
+
+        Entries with a dedicated command stay out of the default pool, but when
+        the default pool cannot serve the requested mode at all, they rejoin as
+        fallback candidates — so @-mention / /生图 requests can still reach
+        workflows that were configured for dedicated commands only.
         """
         if dedicated_command:
             targets = [
@@ -374,10 +384,16 @@ class GenerationService:
             if not targets:
                 raise GenerationError(f"未找到专属指令 /{dedicated_command} 对应的图像目标")
             return sort_targets_by_priority(targets, randomize=True)
-        return sort_targets_by_priority(
-            [target for target in self.targets if not target.dedicated_command],
-            randomize=True,
-        )
+
+        default_pool = [
+            target for target in self.targets if not target.dedicated_command
+        ]
+        if mode and not any(target.supports_mode(mode) for target in default_pool):
+            default_pool = [
+                *default_pool,
+                *(target for target in self.targets if target.dedicated_command),
+            ]
+        return sort_targets_by_priority(default_pool, randomize=True)
 
     @staticmethod
     def _normalize_requested_count(mode: Mode, count: int) -> int:

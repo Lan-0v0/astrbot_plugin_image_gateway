@@ -187,6 +187,7 @@ from astrbot_plugin_image_gateway.main import (  # noqa: E402
     API_SIZE_AUTO_LLM_MODE_FOLLOW_CHAT,
     API_SIZE_AUTO_LLM_MODE_OFF,
     ApiSizeAutoLlmConfig,
+    build_binding_display_summary,
     DedicatedCommandFilter,
     DEFAULT_LLM_CUSTOM_PERSONA_PROMPT,
     DEFAULT_LLM_PROMPT_EXPANSION_PERSONA,
@@ -1150,9 +1151,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.1.9", metadata)
-        self.assertIn('"2.1.9",', main_source)
-        self.assertTrue(changelog.startswith("## v2.1.9"))
+        self.assertIn("version: 2.2.1", metadata)
+        self.assertIn('"2.2.1",', main_source)
+        self.assertTrue(changelog.startswith("## v2.2.1"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -2365,7 +2366,8 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
 
         a1111_template = schema["workflows"]["templates"]["a1111"]
         self.assertEqual(a1111_template["name"], "A1111 Stable Diffusion WebUI")
-        self.assertEqual(a1111_template["display_item"], ["workflow_id"])
+        self.assertEqual(a1111_template["display_item"], "workflow_id")
+        self.assertEqual(a1111_template["display_item_list"], ["workflow_id"])
         self.assertTrue(a1111_template["hide_hint_in_list"])
         self.assertNotIn("display_name", a1111_template["items"])
         self.assertIn("txt2img", a1111_template["items"]["workflow_content"]["hint"])
@@ -2429,7 +2431,10 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
             workflow_template = schema["workflows"]["templates"][template_key]
             workflow_items = workflow_template["items"]
 
-            self.assertEqual(workflow_template["display_item"], ["workflow_id"])
+            # 官方 Dashboard 仅支持字符串 display_item（渲染为 “工作流 ID: 值”），
+            # display_item_list 供打了条目介绍补丁的前端按纯值渲染。
+            self.assertEqual(workflow_template["display_item"], "workflow_id")
+            self.assertEqual(workflow_template["display_item_list"], ["workflow_id"])
             self.assertTrue(workflow_template["hide_hint_in_list"])
             self.assertNotIn("hint", workflow_template)
             self.assertNotIn("display_summary", workflow_items)
@@ -2444,11 +2449,14 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         binding_template = schema["workflow_node_bindings"]["templates"]["binding"]
         binding_items = binding_template["items"]
 
-        self.assertEqual(binding_template["display_item"], ["display_name", "workflow_id"])
+        self.assertEqual(binding_template["display_item"], "display_summary")
+        self.assertEqual(binding_template["display_item_list"], ["display_name", "workflow_id"])
         self.assertEqual(binding_template["display_item_separator"], "——")
         self.assertTrue(binding_template["hide_hint_in_list"])
         self.assertNotIn("hint", binding_template)
-        self.assertNotIn("display_summary", binding_items)
+        self.assertTrue(binding_items["display_summary"]["invisible"])
+        self.assertEqual(binding_items["display_summary"]["description"], "介绍")
+        self.assertEqual(binding_items["display_summary"]["type"], "string")
         self.assertIn("CFG", binding_items["display_name"]["hint"])
     def test_plugin_removes_legacy_workflow_display_fields(self) -> None:
         config_cls = sys.modules["astrbot.api"].AstrBotConfig
@@ -2476,7 +2484,7 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         self.assertIsNotNone(config.saved_config)
         self.assertNotIn("display_name", config.saved_config["workflows"][0])
         self.assertNotIn("display_summary", config.saved_config["workflows"][0])
-    def test_plugin_removes_legacy_binding_display_summary_and_persists_config(self) -> None:
+    def test_plugin_maintains_binding_display_summary_and_persists_config(self) -> None:
         config_cls = sys.modules["astrbot.api"].AstrBotConfig
         config = config_cls(
             {
@@ -2489,7 +2497,15 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
                         "node_id": "85",
                         "field_path": "inputs.text",
                         "binding_type": "prompt_positive",
-                    }
+                    },
+                    {
+                        "__template_key": "binding",
+                        "display_name": "反向提示词",
+                        "workflow_id": "",
+                        "node_id": "86",
+                        "field_path": "inputs.text",
+                        "binding_type": "prompt_negative",
+                    },
                 ]
             }
         )
@@ -2497,14 +2513,34 @@ class WorkflowConfigRegressionTests(unittest.TestCase):
         context_cls = sys.modules["astrbot.api.star"].Context
         plugin = ImageGatewayPlugin(context_cls(), config)
 
-        binding_entry = plugin.plugin_config["workflow_node_bindings"][0]
-        self.assertEqual(binding_entry["display_name"], "正向提示词")
-        self.assertEqual(binding_entry["workflow_id"], "miaomiao文生图")
-        self.assertNotIn("display_summary", binding_entry)
+        first_entry = plugin.plugin_config["workflow_node_bindings"][0]
+        self.assertEqual(first_entry["display_name"], "正向提示词")
+        self.assertEqual(first_entry["workflow_id"], "miaomiao文生图")
+        self.assertEqual(first_entry["display_summary"], "正向提示词——miaomiao文生图")
+        second_entry = plugin.plugin_config["workflow_node_bindings"][1]
+        self.assertEqual(second_entry["display_summary"], "反向提示词")
         self.assertIsNotNone(config.saved_config)
-        self.assertNotIn(
-            "display_summary",
-            config.saved_config["workflow_node_bindings"][0],
+        self.assertEqual(
+            config.saved_config["workflow_node_bindings"][0]["display_summary"],
+            "正向提示词——miaomiao文生图",
+        )
+        self.assertEqual(
+            config.saved_config["workflow_node_bindings"][1]["display_summary"],
+            "反向提示词",
+        )
+
+    def test_build_binding_display_summary_combines_display_name_and_workflow_id(self) -> None:
+        self.assertEqual(
+            build_binding_display_summary("正向提示词", "miaomiao文生图"),
+            "正向提示词——miaomiao文生图",
+        )
+        self.assertEqual(build_binding_display_summary("正向提示词", ""), "正向提示词")
+        self.assertEqual(build_binding_display_summary("", "miaomiao文生图"), "miaomiao文生图")
+        self.assertEqual(build_binding_display_summary(None, None), "")
+        self.assertEqual(build_binding_display_summary("  ", "  "), "")
+        self.assertEqual(
+            build_binding_display_summary(" CFG 节点 ", "  miaomiao改图  "),
+            "CFG 节点——miaomiao改图",
         )
     def test_conf_schema_hides_provider_label_and_defaults_size_to_auto(self) -> None:
         schema = json.loads((repository_root / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -3803,12 +3839,14 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         # default instead, keeping configured-order assertions deterministic.
         priority: int = DEFAULT_PRIORITY,
         supported_modes: list[str] | None = None,
+        dedicated_command: str = "",
     ) -> WorkflowConfig:
         return WorkflowConfig.from_template_entry(
             {
                 "workflow_id": display_name,
                 "priority": priority,
                 "supported_modes": supported_modes or ["text_to_image"],
+                "dedicated_command": dedicated_command,
                 "workflow_content": json.dumps({"6": {"inputs": {"text": "placeholder"}}}),
             }
         )
@@ -3820,6 +3858,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         priority: int = DEFAULT_PRIORITY,
         max_generation_count: int = -1,
         supported_modes: list[str] | None = None,
+        dedicated_command: str = "",
     ) -> ModelConfig:
         return ModelConfig(
             provider="openai",
@@ -3830,6 +3869,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             priority=priority,
             max_generation_count=max_generation_count,
             supported_modes=supported_modes or ["text_to_image", "image_to_image"],
+            dedicated_command=dedicated_command,
         )
 
     async def test_workflow_and_model_targets_are_scheduled_by_priority(self) -> None:
@@ -3900,7 +3940,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(GenerationError) as raised_error:
                 await service.generate(mode="image_to_image", prompt="测试", input_images=["stub-image"])
 
-        self.assertIn("暂不支持改图", str(raised_error.exception))
+        self.assertIn("不支持改图", str(raised_error.exception))
 
     async def test_image_to_image_only_workflow_reports_mode_mismatch_for_text_to_image_requests(self) -> None:
         workflow_only = self.build_workflow(
@@ -3925,7 +3965,119 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(GenerationError) as raised_error:
                 await service.generate(mode="text_to_image", prompt="测试")
 
-        self.assertIn("暂不支持文生图", str(raised_error.exception))
+        self.assertIn("不支持文生图", str(raised_error.exception))
+
+    async def test_dedicated_command_entries_fallback_into_default_pool_when_mode_unserved(self) -> None:
+        """默认池无法满足模式时，设置专属指令的启用条目作为回退候选参与调度。
+
+        复现用户场景：仅启用的默认条目是「仅改图」API，而三个启用的工作流
+        都配置了专属指令（miao / ba / anima）——此前 @bot 自然语言文生图
+        会因为默认池里没有支持文生图的条目而直接报错，永不调用工作流。
+        修复后回退池按优先级排序，优先级 99 的工作流最先被调用。
+        """
+        edit_only_model = self.build_model(
+            "Gitee AI改图",
+            priority=1,
+            supported_modes=["image_to_image"],
+        )
+        mid_priority_dedicated_workflow = self.build_workflow(
+            "miaomiao文生图",
+            priority=98,
+            dedicated_command="miao",
+        )
+        high_priority_dedicated_workflow = self.build_workflow(
+            "Anima",
+            priority=99,
+            dedicated_command="anima",
+        )
+        counter = FakeCounter()
+        service = GenerationService(
+            [
+                edit_only_model,
+                mid_priority_dedicated_workflow,
+                high_priority_dedicated_workflow,
+            ],
+            [
+                WorkflowNodeBinding(
+                    workflow_id=workflow.workflow_id,
+                    node_id="6",
+                    field_path="inputs.text",
+                    binding_type="prompt_positive",
+                )
+                for workflow in (
+                    mid_priority_dedicated_workflow,
+                    high_priority_dedicated_workflow,
+                )
+            ],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        async def fake_generate_text_to_image(
+            self,
+            prompt,
+            count,
+            workflow_config,
+            node_bindings,
+            runtime_config,
+            output_dir,
+            session,
+        ):
+            return [Path(f"{workflow_config.workflow_id}_generated.png")]
+
+        with (
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.ComfyUIWorkflowRunner.generate_text_to_image",
+                fake_generate_text_to_image,
+            ),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, target_name, _effective_send_strategy, _effective_fake_forward = await service.generate(
+                mode="text_to_image", prompt="白丝过膝袜jk"
+            )
+
+        self.assertEqual(target_name, "Anima")
+        self.assertEqual(paths, [Path("Anima_generated.png")])
+
+    def test_dedicated_command_entries_stay_out_of_default_pool_when_mode_served(self) -> None:
+        """默认池已支持当前模式时不触发回退；显式专属指令调度不受影响。"""
+        text_only_model = self.build_model(
+            "TextOnlyModel",
+            priority=1,
+            supported_modes=["text_to_image"],
+        )
+        dedicated_workflow = self.build_workflow(
+            "Anima", priority=99, dedicated_command="anima"
+        )
+        counter = FakeCounter()
+        service = GenerationService(
+            [text_only_model, dedicated_workflow],
+            [
+                WorkflowNodeBinding(
+                    workflow_id=dedicated_workflow.workflow_id,
+                    node_id="6",
+                    field_path="inputs.text",
+                    binding_type="prompt_positive",
+                )
+            ],
+            global_retry_count=1,
+            global_max_generation_count=-1,
+            output_dir=Path("."),
+            counter=counter,
+        )
+
+        selected = service._select_targets(None, mode="text_to_image")
+        self.assertEqual([target.display_name for target in selected], ["TextOnlyModel"])
+
+        dedicated_selected = service._select_targets("anima", mode="text_to_image")
+        self.assertEqual(
+            [target.display_name for target in dedicated_selected], ["Anima"]
+        )
 
     async def test_model_target_reports_mode_mismatch_for_image_to_image_requests(self) -> None:
         text_only_model = self.build_model(
@@ -3950,7 +4102,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(GenerationError) as raised_error:
                 await service.generate(mode="image_to_image", prompt="测试", input_images=["stub-image"])
 
-        self.assertIn("暂不支持改图", str(raised_error.exception))
+        self.assertIn("不支持改图", str(raised_error.exception))
 
     async def test_validate_request_count_ignores_mode_mismatched_workflows(self) -> None:
         image_only_workflow = self.build_workflow(
@@ -4140,7 +4292,7 @@ class MixedTargetSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("miaomiao文生图", str(raised_error.exception))
         self.assertIn("字段路径 inputs.Append 无效", str(raised_error.exception))
         self.assertNotIn("miaomiao改图", str(raised_error.exception))
-        self.assertNotIn("暂不支持文生图", str(raised_error.exception))
+        self.assertNotIn("不支持文生图", str(raised_error.exception))
 
     async def _return_generated_path(self, *args, **kwargs):
         return [Path("fallback_generated.png")]
@@ -5535,7 +5687,12 @@ class DedicatedCommandSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase
         self.assertEqual((default_name, default_paths), ("Default", [Path("Default.png")]))
         self.assertEqual((dedicated_name, dedicated_paths), ("Gemini", [Path("Gemini.png")]))
 
-    async def test_default_command_fails_when_every_target_is_dedicated(self) -> None:
+    async def test_default_command_falls_back_to_dedicated_entries_when_every_target_is_dedicated(self) -> None:
+        """所有启用条目都配置了专属指令时，默认调度回退使用它们。
+
+        v2.1.x 语义下这种情况直接报「默认指令没有可用」，导致 @bot 自然
+        语言生图永远调不到设置了专属指令的工作流；v2.2.1 起回退调度。
+        """
         service = GenerationService(
             [self.build_model("Gemini", "基米生图")],
             [],
@@ -5544,8 +5701,21 @@ class DedicatedCommandSchedulingRegressionTests(unittest.IsolatedAsyncioTestCase
             output_dir=Path("."),
             counter=FakeCounter(),
         )
-        with self.assertRaisesRegex(GenerationError, "默认指令没有可用"):
-            await service.generate(mode="text_to_image", prompt="test")
+
+        async def invoke(target, **kwargs):
+            return [Path(f"{target.display_name}.png")]
+
+        with (
+            patch.object(service, "_invoke_target", invoke),
+            patch(
+                "astrbot_plugin_image_gateway.services.generation.aiohttp.ClientSession",
+                FakeClientSession,
+            ),
+        ):
+            paths, target_name, *_ = await service.generate(mode="text_to_image", prompt="test")
+
+        self.assertEqual(target_name, "Gemini")
+        self.assertEqual(paths, [Path("Gemini.png")])
 
 
 class DedicatedCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):

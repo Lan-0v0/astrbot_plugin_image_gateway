@@ -32,6 +32,7 @@ from .utils.messages import collect_input_images, parse_command_text, parse_coun
 from .utils.resolution import normalize_resolution_value, parse_resolution_from_prompt
 
 PLUGIN_NAME = "astrbot_plugin_image_gateway"
+BINDING_DISPLAY_SUMMARY_SEPARATOR = "——"
 DEFAULT_START_MESSAGES = ["开始生成0v0~"]
 DEFAULT_LLM_CUSTOM_PERSONA_PROMPT = (
     "根据现在的情景，以适宜的性格言语，简单表述要开始生成图片了，不分段不加格式，10字以内，结尾不加标点符号换成颜文字表情，严禁使用emoji。"
@@ -76,6 +77,28 @@ class DedicatedCommandFilter(filter.CustomFilter):
 def _replace_dedicated_command_names(command_names: set[str]) -> None:
     _DEDICATED_COMMAND_NAMES.clear()
     _DEDICATED_COMMAND_NAMES.update(command_names)
+
+
+def build_binding_display_summary(
+    display_name: Any,
+    workflow_id: Any,
+    separator: str = BINDING_DISPLAY_SUMMARY_SEPARATOR,
+) -> str:
+    """组合“工作流自定义节点条目”的列表介绍文案。
+
+    面板里每个绑定条目的介绍固定为「显示名称——所属工作流 ID」，
+    例如 ``正向提示词——miaomiao文生图``。任一端为空时退化为另一端，
+    两端都为空则返回空字符串（面板不渲染介绍）。
+    """
+    parts = [
+        part
+        for part in (
+            str(display_name or "").strip(),
+            str(workflow_id or "").strip(),
+        )
+        if part
+    ]
+    return separator.join(parts)
 
 
 @dataclass(slots=True)
@@ -125,7 +148,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.1.9",
+    "2.2.1",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -148,6 +171,8 @@ class ImageGatewayPlugin(Star):
                 if workflow_id and "display_name" in entry:
                     entry.pop("display_name", None)
                     changed = True
+                # 工作流条目的介绍直接绑定 workflow_id（官方 label: value 渲染），
+                # 旧版遗留的 display_summary 不再使用，启动时清理。
                 if "display_summary" in entry:
                     entry.pop("display_summary", None)
                     changed = True
@@ -155,8 +180,17 @@ class ImageGatewayPlugin(Star):
         raw_bindings = self.plugin_config.get("workflow_node_bindings")
         if isinstance(raw_bindings, list):
             for entry in raw_bindings:
-                if isinstance(entry, dict) and "display_summary" in entry:
-                    entry.pop("display_summary", None)
+                if not isinstance(entry, dict):
+                    continue
+                # 节点条目介绍由插件自动维护：显示名称——所属工作流 ID。
+                # 官方 Dashboard 按 display_item 指向的字符串字段渲染 label: value，
+                # 因此该值写入隐藏字段 display_summary 并持久化，保证介绍永不空白。
+                summary = build_binding_display_summary(
+                    entry.get("display_name"),
+                    entry.get("workflow_id"),
+                )
+                if entry.get("display_summary") != summary:
+                    entry["display_summary"] = summary
                     changed = True
 
         if self._migrate_priority_config():
