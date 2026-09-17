@@ -2498,5 +2498,53 @@
       "平台客户端优先",
       "仅结果管道"
     ]
+  },
+  "image_tagging": {
+    "description": "图像标签识别（/tag）",
+    "hint": "先发送一张图片，再引用那张图片并发送 /tag 指令，即可识别 Danbooru 风格标签并只回复标签内容。识别调用 SmilingWolf 官方在线 wd-tagger 服务完成，图片会上传到该服务，本地不下载模型（wd-tagger-v3 单份权重约 370~450MB）。",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用 /tag 图像标签识别",
+        "type": "bool",
+        "default": true
+      },
+      "space_url": {
+        "description": "识别服务地址",
+        "hint": "默认使用 SmilingWolf 官方 HuggingFace Space（https://smilingwolf-wd-tagger.hf.space）。如需自建或使用镜像，填写 Gradio 服务根地址即可，插件会自动拼接 /gradio_api。",
+        "type": "string",
+        "default": "https://smilingwolf-wd-tagger.hf.space",
+        "condition": {
+          "enabled": true
+        }
+      },
+      "model_repo": {
+        "description": "标签模型",
+        "hint": "默认 wd-swinv2-tagger-v3；该服务还支持 wd-vit-tagger-v3、wd-vit-large-tagger-v3、wd-eva02-large-tagger-v3、wd-convnext-tagger-v3 等，直接填写模型仓库名即可。",
+        "type": "string",
+        "default": "SmilingWolf/wd-swinv2-tagger-v3",
+        "condition": {
+          "enabled": true
+        }
+      },
+      "general_threshold": {
+        "description": "标签阈值",
+        "hint": "0~1 之间，越高越严格、标签越少（默认 0.35）",
+        "type": "float",
+        "default": 0.35,
+        "condition": {
+          "enabled": true
+        }
+      },
+      "timeout_seconds": {
+        "description": "识别超时时间（秒）",
+        "hint": "在线服务冷启动可能较慢，默认 180 秒",
+        "type": "int",
+        "default": 180,
+        "condition": {
+          "enabled": true
+        }
+      }
+    }
   }
 }

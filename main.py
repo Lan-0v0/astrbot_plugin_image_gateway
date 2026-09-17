@@ -24,12 +24,19 @@ from .services.image_cache import cleanup_expired_image_cache, parse_image_cache
 from .services.image_pdf import ImagePdfConfig, convert_images_to_pdf
 from .services.priority import migrate_priority_entry
 from .services.send_strategy import SendStrategy, get_sender_order, parse_global_send_strategy
+from .services.tagger import (
+    ImageTaggingConfig,
+    ImageTaggingError,
+    ImageTaggerService,
+    parse_image_tagging_config,
+)
 from .utils.commands import (
     parse_dedicated_command_text,
 )
 from .utils.config import parse_bool, parse_int
 from .utils.messages import collect_input_images, parse_command_text, parse_count_and_prompt
 from .utils.resolution import normalize_resolution_value, parse_resolution_from_prompt
+from .utils.storage import decode_base64_image
 
 PLUGIN_NAME = "astrbot_plugin_image_gateway"
 BINDING_DISPLAY_SUMMARY_SEPARATOR = "——"
@@ -148,7 +155,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.2.1",
+    "2.2.2",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -266,6 +273,10 @@ class ImageGatewayPlugin(Star):
         self.api_size_auto_llm_config = self._load_api_size_auto_llm_config(
             self.plugin_config.get("api_size_auto_llm")
         )
+        self.image_tagging_config = parse_image_tagging_config(
+            self.plugin_config.get("image_tagging")
+        )
+        self.tagger_service = ImageTaggerService(self.image_tagging_config)
 
     def _refresh_dedicated_commands(self) -> None:
         targets_by_command = {}
@@ -1717,6 +1728,56 @@ class ImageGatewayPlugin(Star):
         """兼容 `/改图，xxx` 这类带中文标点的指令。"""
         async for result in self._handle_image_to_image_request(event):
             yield result
+
+    @filter.command("tag")
+    async def tag_image_command(self, event: AstrMessageEvent):
+        """图像标签识别：先发送图片，再引用那张图片并发送 /tag。"""
+        async for result in self._handle_tag_request(event):
+            yield result
+
+    @filter.regex(r"^(?:/|／)\s*tag[，,、:：;；。.!！？?]*\s*$")
+    async def punctuated_tag_command(self, event: AstrMessageEvent):
+        """兼容 `／tag`、`/tag，` 这类写法（必须带斜杠，避免普通聊天误触发）。"""
+        async for result in self._handle_tag_request(event):
+            yield result
+
+    async def _handle_tag_request(self, event: AstrMessageEvent):
+        """识别引用图片的 Danbooru 标签，只输出标签块本身。"""
+        event.stop_event()
+
+        if not self.image_tagging_config.enabled:
+            yield event.plain_result(
+                "图像标签识别已关闭，可在插件配置面板的「图像标签识别（/tag）」中开启"
+            )
+            return
+
+        input_images = await collect_input_images(event)
+        if not input_images:
+            yield event.plain_result("请先发送一张图片，再引用那张图片并发送 /tag")
+            return
+
+        yield event.plain_result("正在识别图片标签…")
+
+        try:
+            image_bytes = decode_base64_image(input_images[0])
+        except Exception as exc:
+            logger.warning(f"图像标签识别：图片数据解码失败 {exc}")
+            yield event.plain_result(f"标签识别失败：{exc}")
+            return
+
+        try:
+            tags = await self.tagger_service.tag_image(image_bytes)
+        except ImageTaggingError as exc:
+            logger.warning(f"图像标签识别失败: {exc}")
+            yield event.plain_result(f"标签识别失败：{exc}")
+            return
+        except Exception as exc:
+            logger.error(f"图像标签识别异常: {exc}")
+            yield event.plain_result(f"标签识别失败：{exc}")
+            return
+
+        # 只输出标签块，不带「标签：」这类标题前缀。
+        yield event.plain_result(tags)
 
     @filter.llm_tool(name="image_gateway_generate")
     async def image_gateway_generate_tool(

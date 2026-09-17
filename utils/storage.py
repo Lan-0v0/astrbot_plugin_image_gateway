@@ -15,7 +15,8 @@ from astrbot.api import logger
 _VALID_IMAGE_FORMATS = {"png", "jpg", "jpeg", "webp", "gif", "bmp"}
 
 
-def _decode_base64_image(value: str) -> bytes:
+def decode_base64_image(value: str) -> bytes:
+    """把 base64（含 ``data:image/...`` 前缀）解码为图片字节。"""
     raw_value = (value or "").strip()
     if raw_value.startswith("data:image/") and "," in raw_value:
         raw_value = raw_value.split(",", 1)[1]
@@ -44,7 +45,7 @@ async def save_base64_image(
     fmt: str = "png",
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    image_data = _decode_base64_image(base64_string)
+    image_data = decode_base64_image(base64_string)
     fmt = _normalize_image_format(fmt)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_id = str(uuid.uuid4())[:8]

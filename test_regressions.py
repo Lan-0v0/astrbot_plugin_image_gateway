@@ -239,6 +239,17 @@ from astrbot_plugin_image_gateway.services.send_strategy import (  # noqa: E402
     parse_global_send_strategy,
     resolve_effective_send_strategy,
 )
+from astrbot_plugin_image_gateway.services.tagger import (  # noqa: E402
+    DEFAULT_GENERAL_THRESHOLD,
+    DEFAULT_TAGGER_MODEL_REPO,
+    DEFAULT_TAGGER_SPACE_URL,
+    DEFAULT_TAGGER_TIMEOUT_SECONDS,
+    ImageTaggingConfig,
+    ImageTaggingError,
+    ImageTaggerService,
+    normalize_space_url,
+    parse_image_tagging_config,
+)
 from astrbot_plugin_image_gateway.services.workflow_config import (  # noqa: E402
     WorkflowConfig,
     WorkflowNodeBinding,
@@ -1151,9 +1162,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.2.1", metadata)
-        self.assertIn('"2.2.1",', main_source)
-        self.assertTrue(changelog.startswith("## v2.2.1"))
+        self.assertIn("version: 2.2.2", metadata)
+        self.assertIn('"2.2.2",', main_source)
+        self.assertTrue(changelog.startswith("## v2.2.2"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -5798,6 +5809,361 @@ class DedicatedCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
         results = [result async for result in plugin.dedicated_command(event)]
         self.assertEqual(len(results), 1)
         self.assertIn("配置重复", results[0])
+
+
+class FakeTaggerResponse:
+    """极简 aiohttp 响应桩：支持 status / text() / 作为 SSE 行迭代。"""
+
+    def __init__(
+        self,
+        *,
+        status: int = 200,
+        text: str = "",
+        sse_lines: list[str] | None = None,
+    ):
+        self.status = status
+        self._text = text
+        self._sse_lines = list(sse_lines or [])
+
+    async def text(self) -> str:
+        return self._text
+
+    @property
+    def content(self):
+        return self
+
+    def __aiter__(self):
+        async def iterator():
+            for line in self._sse_lines:
+                yield line.encode("utf-8")
+
+        return iterator()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
+class FakeTaggerSession:
+    """按 upload / submit / stream 三类请求返回预置响应并记录调用参数。"""
+
+    def __init__(self, *, upload=None, submit=None, stream=None):
+        self._responses = {
+            "upload": upload or FakeTaggerResponse(text='["/tmp/gradio/demo/image.png"]'),
+            "submit": submit or FakeTaggerResponse(text='{"event_id": "evt-1"}'),
+            "stream": stream or FakeTaggerResponse(sse_lines=[]),
+        }
+        self.calls: list[dict[str, Any]] = []
+
+    def post(self, url, **kwargs):
+        kind = "upload" if str(url).endswith("/upload") else "submit"
+        self.calls.append({"kind": kind, "url": str(url), **kwargs})
+        return _FakeTaggerContext(self._responses[kind])
+
+    def get(self, url, **kwargs):
+        self.calls.append({"kind": "stream", "url": str(url), **kwargs})
+        return _FakeTaggerContext(self._responses["stream"])
+
+
+class _FakeTaggerContext:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
+def _fake_tagger_client_session(session):
+    def factory(*args, **kwargs):
+        return _FakeTaggerContext(session)
+
+    return factory
+
+
+class ImageTaggingServiceRegressionTests(unittest.IsolatedAsyncioTestCase):
+    def build_service(self, **overrides) -> ImageTaggerService:
+        config = ImageTaggingConfig(**overrides)
+        return ImageTaggerService(config)
+
+    @staticmethod
+    def sse_line(payload: Any) -> str:
+        return f"data: {json.dumps(payload, ensure_ascii=False)}"
+
+    async def test_tag_image_returns_pure_tag_block_from_current_sse_shape(self) -> None:
+        sse_payload = [
+            "1girl, solo, long hair",
+            {"label": "general", "confidences": []},
+            {},
+            {"label": "1girl", "confidences": []},
+        ]
+        session = FakeTaggerSession(
+            stream=FakeTaggerResponse(sse_lines=[self.sse_line(sse_payload), ""])
+        )
+        service = self.build_service()
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.tagger.aiohttp.ClientSession",
+            _fake_tagger_client_session(session),
+        ):
+            tags = await service.tag_image(b"png-bytes")
+
+        self.assertEqual(tags, "1girl, solo, long hair")
+        self.assertNotIn("标签：", tags)
+        self.assertNotIn("角色：", tags)
+        self.assertEqual([call["kind"] for call in session.calls], ["upload", "submit", "stream"])
+        submit_payload = session.calls[1]["json"]
+        self.assertEqual(submit_payload["data"][1], DEFAULT_TAGGER_MODEL_REPO)
+        self.assertEqual(submit_payload["data"][2], DEFAULT_GENERAL_THRESHOLD)
+        self.assertTrue(session.calls[1]["url"].endswith("/gradio_api/call/predict"))
+        self.assertTrue(session.calls[2]["url"].endswith("/gradio_api/call/predict/evt-1"))
+
+    async def test_tag_image_parses_legacy_wrapped_gradio_event(self) -> None:
+        wrapped = {
+            "msg": "process_completed",
+            "success": True,
+            "output": {"data": ["cat, sitting, smile", {}, {}, {}]},
+        }
+        session = FakeTaggerSession(
+            stream=FakeTaggerResponse(sse_lines=[self.sse_line(wrapped)])
+        )
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.tagger.aiohttp.ClientSession",
+            _fake_tagger_client_session(session),
+        ):
+            tags = await self.build_service().tag_image(b"png-bytes")
+
+        self.assertEqual(tags, "cat, sitting, smile")
+
+    async def test_tag_image_reports_upload_failure(self) -> None:
+        session = FakeTaggerSession(upload=FakeTaggerResponse(status=503, text="boom"))
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.tagger.aiohttp.ClientSession",
+            _fake_tagger_client_session(session),
+        ):
+            with self.assertRaises(ImageTaggingError) as raised_error:
+                await self.build_service().tag_image(b"png-bytes")
+
+        self.assertIn("上传图片失败", str(raised_error.exception))
+
+    async def test_tag_image_reports_missing_event_id(self) -> None:
+        session = FakeTaggerSession(submit=FakeTaggerResponse(text="{}"))
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.tagger.aiohttp.ClientSession",
+            _fake_tagger_client_session(session),
+        ):
+            with self.assertRaises(ImageTaggingError) as raised_error:
+                await self.build_service().tag_image(b"png-bytes")
+
+        self.assertIn("提交识别任务失败", str(raised_error.exception))
+
+    async def test_tag_image_reports_service_error_event(self) -> None:
+        session = FakeTaggerSession(
+            stream=FakeTaggerResponse(
+                sse_lines=[self.sse_line({"msg": "unexpected_error", "message": "space down"})]
+            )
+        )
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.tagger.aiohttp.ClientSession",
+            _fake_tagger_client_session(session),
+        ):
+            with self.assertRaises(ImageTaggingError) as raised_error:
+                await self.build_service().tag_image(b"png-bytes")
+
+        self.assertIn("在线服务返回错误", str(raised_error.exception))
+        self.assertIn("space down", str(raised_error.exception))
+
+    async def test_tag_image_reports_empty_tags(self) -> None:
+        session = FakeTaggerSession(
+            stream=FakeTaggerResponse(sse_lines=[self.sse_line(["   ", {}, {}, {}])])
+        )
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.tagger.aiohttp.ClientSession",
+            _fake_tagger_client_session(session),
+        ):
+            with self.assertRaises(ImageTaggingError) as raised_error:
+                await self.build_service().tag_image(b"png-bytes")
+
+        self.assertIn("未识别出任何标签", str(raised_error.exception))
+
+    async def test_tag_image_rejects_empty_payload_before_network(self) -> None:
+        service = self.build_service()
+
+        with self.assertRaises(ImageTaggingError) as raised_error:
+            await service.tag_image(b"")
+
+        self.assertIn("图片数据为空", str(raised_error.exception))
+
+    async def test_tag_image_uses_custom_space_url_and_threshold(self) -> None:
+        sse_payload = ["solo", {}, {}, {}]
+        session = FakeTaggerSession(
+            stream=FakeTaggerResponse(sse_lines=[self.sse_line(sse_payload)])
+        )
+        service = self.build_service(
+            space_url="https://mirror.example.com",
+            model_repo="SmilingWolf/wd-vit-tagger-v3",
+            general_threshold=0.5,
+        )
+
+        with patch(
+            "astrbot_plugin_image_gateway.services.tagger.aiohttp.ClientSession",
+            _fake_tagger_client_session(session),
+        ):
+            tags = await service.tag_image(b"png-bytes")
+
+        self.assertEqual(tags, "solo")
+        self.assertTrue(
+            all(call["url"].startswith("https://mirror.example.com/gradio_api") for call in session.calls)
+        )
+        submit_payload = session.calls[1]["json"]
+        self.assertEqual(submit_payload["data"][1], "SmilingWolf/wd-vit-tagger-v3")
+        self.assertEqual(submit_payload["data"][2], 0.5)
+
+
+class ImageTaggingConfigRegressionTests(unittest.TestCase):
+    def test_config_defaults(self) -> None:
+        config = parse_image_tagging_config(None)
+
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.space_url, DEFAULT_TAGGER_SPACE_URL)
+        self.assertEqual(config.model_repo, DEFAULT_TAGGER_MODEL_REPO)
+        self.assertEqual(config.general_threshold, DEFAULT_GENERAL_THRESHOLD)
+        self.assertEqual(config.timeout_seconds, DEFAULT_TAGGER_TIMEOUT_SECONDS)
+
+    def test_config_parses_overrides_and_clamps_invalid_values(self) -> None:
+        config = parse_image_tagging_config(
+            {
+                "enabled": "false",
+                "space_url": "mirror.example.com/gradio_api/",
+                "model_repo": " SmilingWolf/wd-eva02-large-tagger-v3 ",
+                "general_threshold": "0.6",
+                "timeout_seconds": "300",
+            }
+        )
+
+        self.assertFalse(config.enabled)
+        self.assertEqual(config.space_url, "https://mirror.example.com")
+        self.assertEqual(config.model_repo, "SmilingWolf/wd-eva02-large-tagger-v3")
+        self.assertEqual(config.general_threshold, 0.6)
+        self.assertEqual(config.timeout_seconds, 300)
+
+        fallback = parse_image_tagging_config(
+            {"general_threshold": 9, "timeout_seconds": -5, "model_repo": "   "}
+        )
+        self.assertEqual(fallback.general_threshold, DEFAULT_GENERAL_THRESHOLD)
+        self.assertEqual(fallback.timeout_seconds, DEFAULT_TAGGER_TIMEOUT_SECONDS)
+        self.assertEqual(fallback.model_repo, DEFAULT_TAGGER_MODEL_REPO)
+
+    def test_normalize_space_url_accepts_bare_host_and_gradio_suffix(self) -> None:
+        self.assertEqual(
+            normalize_space_url("https://smilingwolf-wd-tagger.hf.space/gradio_api"),
+            "https://smilingwolf-wd-tagger.hf.space",
+        )
+        self.assertEqual(
+            normalize_space_url("https://smilingwolf-wd-tagger.hf.space/"),
+            "https://smilingwolf-wd-tagger.hf.space",
+        )
+        self.assertEqual(
+            normalize_space_url("smilingwolf-wd-tagger.hf.space"),
+            "https://smilingwolf-wd-tagger.hf.space",
+        )
+        self.assertEqual(normalize_space_url(""), DEFAULT_TAGGER_SPACE_URL)
+        self.assertEqual(normalize_space_url("   "), DEFAULT_TAGGER_SPACE_URL)
+
+
+class TagCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def build_plugin(*, enabled: bool = True, tags: str = "1girl, solo", error=None):
+        plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
+        plugin.image_tagging_config = ImageTaggingConfig(enabled=enabled)
+
+        class FakeTagger:
+            async def tag_image(self, image_bytes, **kwargs):
+                if error is not None:
+                    raise error
+                return tags
+
+        plugin.tagger_service = FakeTagger()
+        return plugin
+
+    @staticmethod
+    def build_event_with_image(message_text: str = "/tag") -> FakeEvent:
+        event = FakeEvent(message_text)
+        event.message_obj = types.SimpleNamespace(
+            message=[sys.modules["astrbot.api.all"].Image()]
+        )
+        return event
+
+    async def test_handler_replies_only_the_tag_block(self) -> None:
+        plugin = self.build_plugin(tags="1girl, solo, long hair")
+        event = self.build_event_with_image()
+
+        with patch(
+            "astrbot_plugin_image_gateway.main.decode_base64_image",
+            return_value=b"png-bytes",
+        ):
+            results = [result async for result in plugin.tag_image_command(event)]
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(results[0], "正在识别图片标签…")
+        self.assertEqual(results[1], "1girl, solo, long hair")
+        for text in results:
+            self.assertNotIn("标签：", text)
+            self.assertNotIn("标签:", text)
+            self.assertNotIn("角色：", text)
+
+    async def test_handler_guides_user_when_no_image_is_quoted(self) -> None:
+        plugin = self.build_plugin()
+        event = FakeEvent("/tag")
+
+        results = [result async for result in plugin.tag_image_command(event)]
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("引用", results[0])
+
+    async def test_handler_reports_disabled_state(self) -> None:
+        plugin = self.build_plugin(enabled=False)
+        event = self.build_event_with_image()
+
+        results = [result async for result in plugin.tag_image_command(event)]
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("已关闭", results[0])
+
+    async def test_handler_reports_tagging_error(self) -> None:
+        plugin = self.build_plugin(error=ImageTaggingError("识别超时（180s），请稍后重试"))
+        event = self.build_event_with_image()
+
+        with patch(
+            "astrbot_plugin_image_gateway.main.decode_base64_image",
+            return_value=b"png-bytes",
+        ):
+            results = [result async for result in plugin.tag_image_command(event)]
+
+        self.assertEqual(results[0], "正在识别图片标签…")
+        self.assertIn("标签识别失败", results[-1])
+        self.assertIn("识别超时", results[-1])
+
+    async def test_handler_keeps_backward_compatible_punctuated_command(self) -> None:
+        plugin = self.build_plugin(tags="cat")
+        event = self.build_event_with_image("／tag，")
+
+        with patch(
+            "astrbot_plugin_image_gateway.main.decode_base64_image",
+            return_value=b"png-bytes",
+        ):
+            results = [result async for result in plugin.punctuated_tag_command(event)]
+
+        self.assertEqual(results[-1], "cat")
 
 
 if __name__ == "__main__":

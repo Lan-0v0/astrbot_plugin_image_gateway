@@ -489,6 +489,20 @@ https://github.com/Lan-0v0/astrbot\_plugin\_image\_gateway
 
 每个模型 / 工作流条目都可以单独设置 `send\_strategy`；默认值为 `follow\_global`，表示跟随本节的全局配置。
 
+### 图像标签识别（`image\_tagging`）
+
+位于配置面板**最底部**，用于 `/tag` 图像标签识别功能。
+
+|字段|说明|
+|-|-|
+|`enabled`|是否启用 `/tag`，默认开启；关闭后 `/tag` 会直接提示已关闭|
+|`space\_url`|识别服务地址，默认 `https://smilingwolf-wd-tagger.hf.space`。可填自建或镜像的 Gradio 服务根地址，插件会自动拼接 `/gradio_api`|
+|`model\_repo`|标签模型，默认 `SmilingWolf/wd-swinv2-tagger-v3`；该服务还支持 `wd-vit-tagger-v3`、`wd-vit-large-tagger-v3`、`wd-eva02-large-tagger-v3`、`wd-convnext-tagger-v3` 等|
+|`general\_threshold`|标签阈值，`0~1`，默认 `0.35`；越高标签越少越严格|
+|`timeout\_seconds`|识别超时时间，默认 `180` 秒（在线服务冷启动可能较慢）|
+
+> **隐私提示**：识别时图片会被上传到所配置的在线服务（默认是 SmilingWolf 的官方 HuggingFace Space），本地不会保存或下载模型权重。若不希望图片离开本机，可关闭该功能，或把 `space_url` 指向自己部署的 wd-tagger 服务。
+
 ### 优先级使用建议
 
 每个模型 / 工作流条目只有一个 `priority` 数值输入框，默认 `1`：
@@ -544,6 +558,27 @@ https://github.com/Lan-0v0/astrbot\_plugin\_image\_gateway
 ```
 （附带一张人像照片）
 /改图 把脸P上黑曼巴，笑容四溢
+```
+
+### `/tag` — 图像标签识别
+
+```
+（先发送一张图片）
+/tag          ← 引用那张图片并发送
+```
+
+* 推荐用法：先发送图片，再**引用那张图片**并发送 `/tag`；同一条消息里附带图片也可以
+* 识别使用收集到的**第一张**图片
+* 插件只回复标签块本身，例如 `1girl, solo, long hair, smile`，不带「标签：」等标题前缀
+* 识别由 **SmilingWolf 官方在线 wd-tagger 服务**（HuggingFace Space）完成：插件把图片上传到该服务并取回标签，**本地不下载任何模型**（wd-tagger-v3 系列单份权重约 370~450MB，插件本体因此保持轻量）
+* 因此使用时需要能访问该服务；识别失败（服务不可达 / 超时 / 未识别出标签）时会返回可读的中文提示，不影响生图与改图
+* 可在配置面板的「图像标签识别（/tag）」中调整服务地址（自建或镜像 Gradio 地址）、标签模型、标签阈值与超时时间，也可以整体关闭
+
+**示例：**
+
+```
+（引用一张动漫立绘） /tag
+→ 1girl, solo, long hair, blue eyes, smile
 ```
 
 ### 条目专属指令
@@ -678,6 +713,17 @@ astrbot\_plugin\_image\_gateway/
 
 * 当同时存在“仅文生图”和“仅改图”工作流时，如果真正参与执行的文生图工作流因为节点 ID 或字段路径写错而失败，现在会优先返回真实执行错误
 * 不再被后续被跳过的“仅改图工作流暂不支持文生图”提示覆盖，排错会更直接
+
+## v2.2.2 补充说明
+
+### `/tag` 图像标签识别
+
+* 新增 `/tag` 指令：**先发送图片，再引用那张图片并发送 `/tag`**，插件识别 Danbooru 风格标签，并且**只回复标签块本身**（不带「标签：」标题，也不输出角色块），例如直接回复 `1girl, solo, long hair, smile`
+* 同一消息里附带图片、`／tag`、`/tag，` 等写法也兼容；没有引用到图片时会提示正确用法
+* 识别调用 SmilingWolf 官方托管的在线 wd-tagger 服务（Gradio HTTP API），**不在本地下载模型**——wd-tagger-v3 系列单份权重约 370~450MB（`wd-swinv2-tagger-v3` 的 `model.onnx` 约 446MB），走在线服务可让插件保持轻量
+* 配置面板最底部新增「图像标签识别（/tag）」区块，可开关功能、替换服务地址（自建/镜像）、切换标签模型、调整阈值与超时
+* 识别失败会返回可读中文提示（服务不可达 / 超时 / 未识别出标签），不影响生图与改图链路
+* **重要**：使用该功能需要能访问所配置的在线服务；图片会上传到该服务，介意的话请关闭该功能
 
 ## v2.2.0 补充说明
 
