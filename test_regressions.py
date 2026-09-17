@@ -1162,9 +1162,9 @@ class ConfigurationDefaultRegressionTests(unittest.TestCase):
         main_source = (repository_root / "main.py").read_text(encoding="utf-8")
         changelog = (repository_root / "CHANGELOG.md").read_text(encoding="utf-8")
 
-        self.assertIn("version: 2.2.2", metadata)
-        self.assertIn('"2.2.2",', main_source)
-        self.assertTrue(changelog.startswith("## v2.2.2"))
+        self.assertIn("version: 2.2.3", metadata)
+        self.assertIn('"2.2.3",', main_source)
+        self.assertTrue(changelog.startswith("## v2.2.3"))
 
     def test_model_config_defaults_to_high_quality(self) -> None:
         model_config = ModelConfig.from_template_entry({"provider": "openai"})
@@ -6082,9 +6082,23 @@ class ImageTaggingConfigRegressionTests(unittest.TestCase):
 
 class TagCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
-    def build_plugin(*, enabled: bool = True, tags: str = "1girl, solo", error=None):
+    def build_plugin(
+        *,
+        enabled: bool = True,
+        tags: str = "1girl, solo",
+        error=None,
+        send_ok: bool = True,
+    ):
         plugin = ImageGatewayPlugin.__new__(ImageGatewayPlugin)
         plugin.image_tagging_config = ImageTaggingConfig(enabled=enabled)
+        sent: list[str] = []
+
+        async def fake_send(_event, text, *, sender_order=None):
+            sent.append(text)
+            return send_ok
+
+        plugin._send_plain_text_directly = fake_send
+        plugin.sent_texts = sent
 
         class FakeTagger:
             async def tag_image(self, image_bytes, **kwargs):
@@ -6103,8 +6117,13 @@ class TagCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
         )
         return event
 
-    async def test_handler_replies_only_the_tag_block(self) -> None:
-        plugin = self.build_plugin(tags="1girl, solo, long hair")
+    async def test_handler_sends_tag_block_directly_without_second_yield(self) -> None:
+        """回归点：结果必须主动发送，不能靠第二个 yield。
+
+        AstrBot 的生成器循环里，只要有插件在首条消息发出后停止事件传播，
+        后续 yield 就不会被取用，标签会凭空消失且没有任何报错。
+        """
+        plugin = self.build_plugin(tags="1girl, solo, long hair", send_ok=True)
         event = self.build_event_with_image()
 
         with patch(
@@ -6114,12 +6133,27 @@ class TagCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
             results = [result async for result in plugin.tag_image_command(event)]
 
         self.assertTrue(event.stopped)
-        self.assertEqual(results[0], "正在识别图片标签…")
-        self.assertEqual(results[1], "1girl, solo, long hair")
-        for text in results:
+        self.assertEqual(results, [])
+        self.assertEqual(
+            plugin.sent_texts, ["正在识别图片标签…", "1girl, solo, long hair"]
+        )
+        for text in plugin.sent_texts[1:]:
             self.assertNotIn("标签：", text)
             self.assertNotIn("标签:", text)
             self.assertNotIn("角色：", text)
+
+    async def test_handler_falls_back_to_single_yield_when_direct_send_fails(self) -> None:
+        plugin = self.build_plugin(tags="cat, sitting", send_ok=False)
+        event = self.build_event_with_image()
+
+        with patch(
+            "astrbot_plugin_image_gateway.main.decode_base64_image",
+            return_value=b"png-bytes",
+        ):
+            results = [result async for result in plugin.tag_image_command(event)]
+
+        self.assertEqual(plugin.sent_texts, ["正在识别图片标签…", "cat, sitting"])
+        self.assertEqual(results, ["cat, sitting"])
 
     async def test_handler_guides_user_when_no_image_is_quoted(self) -> None:
         plugin = self.build_plugin()
@@ -6140,7 +6174,9 @@ class TagCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已关闭", results[0])
 
     async def test_handler_reports_tagging_error(self) -> None:
-        plugin = self.build_plugin(error=ImageTaggingError("识别超时（180s），请稍后重试"))
+        plugin = self.build_plugin(
+            error=ImageTaggingError("识别超时（180s），请稍后重试"), send_ok=True
+        )
         event = self.build_event_with_image()
 
         with patch(
@@ -6149,12 +6185,27 @@ class TagCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
         ):
             results = [result async for result in plugin.tag_image_command(event)]
 
-        self.assertEqual(results[0], "正在识别图片标签…")
-        self.assertIn("标签识别失败", results[-1])
-        self.assertIn("识别超时", results[-1])
+        self.assertEqual(results, [])
+        self.assertEqual(plugin.sent_texts[0], "正在识别图片标签…")
+        self.assertIn("标签识别失败", plugin.sent_texts[-1])
+        self.assertIn("识别超时", plugin.sent_texts[-1])
+
+    async def test_handler_reports_decode_failure(self) -> None:
+        plugin = self.build_plugin(send_ok=True)
+        event = self.build_event_with_image()
+
+        with patch(
+            "astrbot_plugin_image_gateway.main.decode_base64_image",
+            side_effect=ValueError("图片数据不是有效的 base64 内容"),
+        ):
+            results = [result async for result in plugin.tag_image_command(event)]
+
+        self.assertEqual(results, [])
+        self.assertIn("标签识别失败", plugin.sent_texts[-1])
+        self.assertIn("base64", plugin.sent_texts[-1])
 
     async def test_handler_keeps_backward_compatible_punctuated_command(self) -> None:
-        plugin = self.build_plugin(tags="cat")
+        plugin = self.build_plugin(tags="cat", send_ok=True)
         event = self.build_event_with_image("／tag，")
 
         with patch(
@@ -6163,7 +6214,8 @@ class TagCommandHandlerRegressionTests(unittest.IsolatedAsyncioTestCase):
         ):
             results = [result async for result in plugin.punctuated_tag_command(event)]
 
-        self.assertEqual(results[-1], "cat")
+        self.assertEqual(results, [])
+        self.assertEqual(plugin.sent_texts[-1], "cat")
 
 
 if __name__ == "__main__":

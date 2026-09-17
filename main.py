@@ -155,7 +155,7 @@ class StartMessageDispatchResult:
     PLUGIN_NAME,
     "AstrBot",
     "多模型图像生成网关，支持 OpenAI/Gemini/国内主流图像 API 与 ComfyUI/A1111 Workflow、优先级回退与自然语言触发",
-    "2.2.2",
+    "2.2.3",
 )
 class ImageGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
@@ -1742,7 +1742,13 @@ class ImageGatewayPlugin(Star):
             yield result
 
     async def _handle_tag_request(self, event: AstrMessageEvent):
-        """识别引用图片的 Danbooru 标签，只输出标签块本身。"""
+        """识别引用图片的 Danbooru 标签，只输出标签块本身。
+
+        进度提示与最终结果都用**主动发送**，而不是连续 ``yield``：AstrBot 的
+        生成器循环里，只要某个插件在首条消息发出后停止了事件传播，后续
+        ``yield`` 就不会再被取用，标签会凭空消失（日志表现为只有“正在识别
+        图片标签…”且没有任何报错）。主动发送失败才退化成单条结果。
+        """
         event.stop_event()
 
         if not self.image_tagging_config.enabled:
@@ -1756,28 +1762,26 @@ class ImageGatewayPlugin(Star):
             yield event.plain_result("请先发送一张图片，再引用那张图片并发送 /tag")
             return
 
-        yield event.plain_result("正在识别图片标签…")
+        await self._send_plain_text_directly(event, "正在识别图片标签…")
 
         try:
             image_bytes = decode_base64_image(input_images[0])
         except Exception as exc:
             logger.warning(f"图像标签识别：图片数据解码失败 {exc}")
-            yield event.plain_result(f"标签识别失败：{exc}")
-            return
+            result_text = f"标签识别失败：{exc}"
+        else:
+            try:
+                # 只取标签块本身，不带「标签：」这类标题前缀。
+                result_text = await self.tagger_service.tag_image(image_bytes)
+            except ImageTaggingError as exc:
+                logger.warning(f"图像标签识别失败: {exc}")
+                result_text = f"标签识别失败：{exc}"
+            except Exception as exc:
+                logger.error(f"图像标签识别异常: {exc}")
+                result_text = f"标签识别失败：{exc}"
 
-        try:
-            tags = await self.tagger_service.tag_image(image_bytes)
-        except ImageTaggingError as exc:
-            logger.warning(f"图像标签识别失败: {exc}")
-            yield event.plain_result(f"标签识别失败：{exc}")
-            return
-        except Exception as exc:
-            logger.error(f"图像标签识别异常: {exc}")
-            yield event.plain_result(f"标签识别失败：{exc}")
-            return
-
-        # 只输出标签块，不带「标签：」这类标题前缀。
-        yield event.plain_result(tags)
+        if not await self._send_plain_text_directly(event, result_text):
+            yield event.plain_result(result_text)
 
     @filter.llm_tool(name="image_gateway_generate")
     async def image_gateway_generate_tool(
